@@ -1,0 +1,150 @@
+spring:
+  application:
+    name: rabbitmq-high-throughput-app
+
+  # RabbitMQ Configuration
+  rabbitmq:
+    host: localhost
+    port: 5672
+    username: admin
+    password: admin123
+    virtual-host: /
+
+    # Connection pooling for high throughput
+    cache:
+      connection:
+        mode: channel
+        size: 25  # Connection pool size
+      channel:
+        size: 50   # Channel pool size per connection
+        checkout-timeout: 10000
+
+    # Performance optimizations
+    connection-timeout: 30000
+    requested-heartbeat: 30
+
+    # Publisher confirms for reliability
+    publisher-confirm-type: correlated
+    publisher-returns: true
+
+    # Listener configuration
+    listener:
+      simple:
+        # Consumer concurrency (threads per queue)
+        concurrency: 10
+        max-concurrency: 20
+
+        # Prefetch count (messages fetched per consumer)
+        prefetch: 50
+
+        # Acknowledgment mode
+        acknowledge-mode: manual
+
+        # Retry configuration
+        retry:
+          enabled: false  # We handle retries manually via DLX
+
+        # Consumer transaction
+        transaction-size: 10
+
+        # Idle event interval
+        idle-event-interval: 30000
+
+    # Template configuration for publishers
+    template:
+      retry:
+        enabled: true
+        initial-interval: 1000
+        max-attempts: 3
+        max-interval: 10000
+        multiplier: 2.0
+      mandatory: true
+      receive-timeout: 5000
+      reply-timeout: 5000
+
+  # Database Configuration (MSSQL)
+  datasource:
+    url: jdbc:sqlserver://localhost:1433;databaseName=message_tracking_db;encrypt=true;trustServerCertificate=true
+    username: sa
+    password: YourStrong@Password123
+    driver-class-name: com.microsoft.sqlserver.jdbc.SQLServerDriver
+
+    # HikariCP connection pool for high performance
+    hikari:
+      maximum-pool-size: 50
+      minimum-idle: 10
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+      pool-name: MessageTrackingPool
+      auto-commit: false
+
+  # JPA Configuration
+  jpa:
+    hibernate:
+      ddl-auto: update  # Use 'create' first time, then 'validate'
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.SQLServerDialect
+        format_sql: false
+        jdbc:
+          batch_size: 50  # Batch inserts for performance
+          fetch_size: 100
+        order_inserts: true
+        order_updates: true
+        connection:
+          provider_disables_autocommit: true
+        query:
+          in_clause_parameter_padding: true
+        generate_statistics: false
+
+  # Jackson JSON configuration
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+    deserialization:
+      fail-on-unknown-properties: false
+
+# Server configuration
+server:
+  port: 8080
+  tomcat:
+    threads:
+      max: 200
+      min-spare: 10
+    accept-count: 100
+    max-connections: 8192
+
+# Logging
+logging:
+  level:
+    root: INFO
+    com.example.demo: DEBUG
+    org.springframework.amqp: INFO
+    org.hibernate.SQL: WARN
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+
+# Custom Application Properties
+app:
+  rabbitmq:
+    # Exchange configuration
+    exchange:
+      name: message.exchange
+      type: topic
+      durable: true
+      dlx-name: message.dlx.exchange
+
+    # Retry configuration
+    retry:
+      max-attempts: 3
+      delays:
+        - 2000   # 2 seconds
+        - 4000   # 4 seconds
+        - 8000   # 8 seconds
+
+  # Tracking
+  tracking:
+    id-prefix: MSG
+    id-length: 32
