@@ -30,63 +30,108 @@ public class MessageConsumer {
     @Value("${app.rabbitmq.retry.max-attempts}")
     private int maxRetryAttempts;
 
-    // ========== MAIN QUEUE CONSUMERS ==========
+    // ========== MAIN QUEUE CONSUMERS (6 queues: 2 per priority) ==========
 
     /**
-     * Consumer for Queue 1 (High Priority)
+     * Consumer for High Priority Queue 1
      * Concurrency: 10-20 threads
      */
     @RabbitListener(
-            queues = "message-queue-1",
+            queues = "message-queue-high-1",
             concurrency = "10-20",
             containerFactory = "rabbitListenerContainerFactory"
     )
-    public void consumeQueue1(
+    public void consumeHighQueue1(
             @Payload MessagePayload payload,
             @Header(AmqpHeaders.DELIVERY_TAG) long deliveryTag,
             Channel channel) throws IOException {
-
-        processMessage(payload, deliveryTag, channel, "message-queue-1");
+        processMessage(payload, deliveryTag, channel, "message-queue-high-1");
     }
 
     /**
-     * Consumer for Queue 2 (Medium Priority)
+     * Consumer for High Priority Queue 2
      * Concurrency: 10-20 threads
      */
     @RabbitListener(
-            queues = "message-queue-2",
+            queues = "message-queue-high-2",
             concurrency = "10-20",
             containerFactory = "rabbitListenerContainerFactory"
     )
-    public void consumeQueue2(
+    public void consumeHighQueue2(
             @Payload MessagePayload payload,
             @Header(AmqpHeaders.DELIVERY_TAG) long deliveryTag,
             Channel channel) throws IOException {
-
-        processMessage(payload, deliveryTag, channel, "message-queue-2");
+        processMessage(payload, deliveryTag, channel, "message-queue-high-2");
     }
 
     /**
-     * Consumer for Queue 3 (Low Priority)
+     * Consumer for Medium Priority Queue 1
      * Concurrency: 10-20 threads
      */
     @RabbitListener(
-            queues = "message-queue-3",
+            queues = "message-queue-medium-1",
             concurrency = "10-20",
             containerFactory = "rabbitListenerContainerFactory"
     )
-    public void consumeQueue3(
+    public void consumeMediumQueue1(
             @Payload MessagePayload payload,
             @Header(AmqpHeaders.DELIVERY_TAG) long deliveryTag,
             Channel channel) throws IOException {
+        processMessage(payload, deliveryTag, channel, "message-queue-medium-1");
+    }
 
-        processMessage(payload, deliveryTag, channel, "message-queue-3");
+    /**
+     * Consumer for Medium Priority Queue 2
+     * Concurrency: 10-20 threads
+     */
+    @RabbitListener(
+            queues = "message-queue-medium-2",
+            concurrency = "10-20",
+            containerFactory = "rabbitListenerContainerFactory"
+    )
+    public void consumeMediumQueue2(
+            @Payload MessagePayload payload,
+            @Header(AmqpHeaders.DELIVERY_TAG) long deliveryTag,
+            Channel channel) throws IOException {
+        processMessage(payload, deliveryTag, channel, "message-queue-medium-2");
+    }
+
+    /**
+     * Consumer for Low Priority Queue 1
+     * Concurrency: 10-20 threads
+     */
+    @RabbitListener(
+            queues = "message-queue-low-1",
+            concurrency = "10-20",
+            containerFactory = "rabbitListenerContainerFactory"
+    )
+    public void consumeLowQueue1(
+            @Payload MessagePayload payload,
+            @Header(AmqpHeaders.DELIVERY_TAG) long deliveryTag,
+            Channel channel) throws IOException {
+        processMessage(payload, deliveryTag, channel, "message-queue-low-1");
+    }
+
+    /**
+     * Consumer for Low Priority Queue 2
+     * Concurrency: 10-20 threads
+     */
+    @RabbitListener(
+            queues = "message-queue-low-2",
+            concurrency = "10-20",
+            containerFactory = "rabbitListenerContainerFactory"
+    )
+    public void consumeLowQueue2(
+            @Payload MessagePayload payload,
+            @Header(AmqpHeaders.DELIVERY_TAG) long deliveryTag,
+            Channel channel) throws IOException {
+        processMessage(payload, deliveryTag, channel, "message-queue-low-2");
     }
 
     // ========== MESSAGE PROCESSING LOGIC ==========
 
     /**
-     * Core message processing logic
+     * Core message processing logic (shared by all consumers)
      */
     private void processMessage(
             MessagePayload payload,
@@ -182,31 +227,62 @@ public class MessageConsumer {
     // ========== DEAD LETTER QUEUE LISTENERS (Monitoring) ==========
 
     /**
-     * Monitor DLQ for Queue 1
+     * Monitor DLQ for High Priority Queue 1
      */
-    @RabbitListener(queues = "message-queue-1.dlq")
-    public void handleDLQ1(@Payload MessagePayload payload, Message message) {
-        log.error("Message {} in DLQ for queue-1. Priority: {}, Payload: {}",
-                payload.getTrackingId(), payload.getPriority(), payload.getPayload());
+    @RabbitListener(queues = "message-queue-high-1.dlq")
+    public void handleDLQHigh1(@Payload MessagePayload payload, Message message) {
+        logDLQMessage(payload, "message-queue-high-1");
+    }
+
+    /**
+     * Monitor DLQ for High Priority Queue 2
+     */
+    @RabbitListener(queues = "message-queue-high-2.dlq")
+    public void handleDLQHigh2(@Payload MessagePayload payload, Message message) {
+        logDLQMessage(payload, "message-queue-high-2");
+    }
+
+    /**
+     * Monitor DLQ for Medium Priority Queue 1
+     */
+    @RabbitListener(queues = "message-queue-medium-1.dlq")
+    public void handleDLQMedium1(@Payload MessagePayload payload, Message message) {
+        logDLQMessage(payload, "message-queue-medium-1");
+    }
+
+    /**
+     * Monitor DLQ for Medium Priority Queue 2
+     */
+    @RabbitListener(queues = "message-queue-medium-2.dlq")
+    public void handleDLQMedium2(@Payload MessagePayload payload, Message message) {
+        logDLQMessage(payload, "message-queue-medium-2");
+    }
+
+    /**
+     * Monitor DLQ for Low Priority Queue 1
+     */
+    @RabbitListener(queues = "message-queue-low-1.dlq")
+    public void handleDLQLow1(@Payload MessagePayload payload, Message message) {
+        logDLQMessage(payload, "message-queue-low-1");
+    }
+
+    /**
+     * Monitor DLQ for Low Priority Queue 2
+     */
+    @RabbitListener(queues = "message-queue-low-2.dlq")
+    public void handleDLQLow2(@Payload MessagePayload payload, Message message) {
+        logDLQMessage(payload, "message-queue-low-2");
+    }
+
+    /**
+     * Helper method to log DLQ messages
+     */
+    private void logDLQMessage(MessagePayload payload, String sourceQueue) {
+        log.error("Message {} in DLQ for {}. Priority: {}, RetryCount: {}, Payload: {}",
+                payload.getTrackingId(), sourceQueue, payload.getPriority(),
+                payload.getRetryCount(), payload.getPayload());
 
         // Optional: Add alerting, special logging, or manual intervention trigger
-    }
-
-    /**
-     * Monitor DLQ for Queue 2
-     */
-    @RabbitListener(queues = "message-queue-2.dlq")
-    public void handleDLQ2(@Payload MessagePayload payload, Message message) {
-        log.error("Message {} in DLQ for queue-2. Priority: {}, Payload: {}",
-                payload.getTrackingId(), payload.getPriority(), payload.getPayload());
-    }
-
-    /**
-     * Monitor DLQ for Queue 3
-     */
-    @RabbitListener(queues = "message-queue-3.dlq")
-    public void handleDLQ3(@Payload MessagePayload payload, Message message) {
-        log.error("Message {} in DLQ for queue-3. Priority: {}, Payload: {}",
-                payload.getTrackingId(), payload.getPriority(), payload.getPayload());
+        // Example: send email, trigger PagerDuty, write to special audit table
     }
 }
