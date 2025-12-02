@@ -39,11 +39,11 @@ public class MessagePublisherService {
             log.debug("Priority not provided for message {}, auto-assigned to MEDIUM", trackingId);
         }
 
-        // Determine routing key based on priority
-        String routingKey = priority.getRoutingKey();
-
         // Use load balancer to select the best queue from available queues for this priority
         String selectedQueue = loadBalancerService.selectQueue(priority);
+
+        // Determine routing key based on selected queue
+        String routingKey = priority.getRoutingKeyForQueue(selectedQueue);
 
         // Build message payload
         MessagePayload payload = MessagePayload.builder()

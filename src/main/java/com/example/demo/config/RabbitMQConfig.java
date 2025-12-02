@@ -24,16 +24,19 @@ public class RabbitMQConfig {
     @Value("${app.rabbitmq.exchange.dlx-name}")
     private String dlxExchangeName;
 
+    @Value("${app.rabbitmq.queue.ttl:86400000}")
+    private long queueTtl; // 24 hours default
+
     // ========== EXCHANGES ==========
 
     @Bean
-    public TopicExchange messageExchange() {
-        return new TopicExchange(exchangeName, true, false);
+    public DirectExchange messageExchange() {
+        return new DirectExchange(exchangeName, true, false);
     }
 
     @Bean
-    public TopicExchange dlxExchange() {
-        return new TopicExchange(dlxExchangeName, true, false);
+    public DirectExchange dlxExchange() {
+        return new DirectExchange(dlxExchangeName, true, false);
     }
 
     // ========== MAIN QUEUES (6 queues: 2 per priority level) ==========
@@ -41,162 +44,162 @@ public class RabbitMQConfig {
     // HIGH PRIORITY QUEUES
     @Bean
     public Queue messageQueueHigh1() {
-        return createMainQueue("message-queue-high-1", "dlq.message-queue-high-1");
+        return createMainQueue("inappcommunication.priority-high-1-fed", "dlq.high-1");
     }
 
     @Bean
     public Queue messageQueueHigh2() {
-        return createMainQueue("message-queue-high-2", "dlq.message-queue-high-2");
+        return createMainQueue("inappcommunication.priority-high-2-fed", "dlq.high-2");
     }
 
     // MEDIUM PRIORITY QUEUES
     @Bean
     public Queue messageQueueMedium1() {
-        return createMainQueue("message-queue-medium-1", "dlq.message-queue-medium-1");
+        return createMainQueue("inappcommunication.priority-medium-1-fed", "dlq.medium-1");
     }
 
     @Bean
     public Queue messageQueueMedium2() {
-        return createMainQueue("message-queue-medium-2", "dlq.message-queue-medium-2");
+        return createMainQueue("inappcommunication.priority-medium-2-fed", "dlq.medium-2");
     }
 
     // LOW PRIORITY QUEUES
     @Bean
     public Queue messageQueueLow1() {
-        return createMainQueue("message-queue-low-1", "dlq.message-queue-low-1");
+        return createMainQueue("inappcommunication.priority-low-1-fed", "dlq.low-1");
     }
 
     @Bean
     public Queue messageQueueLow2() {
-        return createMainQueue("message-queue-low-2", "dlq.message-queue-low-2");
+        return createMainQueue("inappcommunication.priority-low-2-fed", "dlq.low-2");
     }
 
     // ========== RETRY QUEUES - HIGH PRIORITY ==========
 
     @Bean
     public Queue retryQueueHigh1Level1() {
-        return createRetryQueue("message-queue-high-1.retry.1", 2000, "message.priority.high");
+        return createRetryQueue("inappcommunication.priority-high-1-retry-1-fed", 2000, "priority.high.1");
     }
 
     @Bean
     public Queue retryQueueHigh1Level2() {
-        return createRetryQueue("message-queue-high-1.retry.2", 4000, "message.priority.high");
+        return createRetryQueue("inappcommunication.priority-high-1-retry-2-fed", 4000, "priority.high.1");
     }
 
     @Bean
     public Queue retryQueueHigh1Level3() {
-        return createRetryQueue("message-queue-high-1.retry.3", 8000, "message.priority.high");
+        return createRetryQueue("inappcommunication.priority-high-1-retry-3-fed", 8000, "priority.high.1");
     }
 
     @Bean
     public Queue retryQueueHigh2Level1() {
-        return createRetryQueue("message-queue-high-2.retry.1", 2000, "message.priority.high");
+        return createRetryQueue("inappcommunication.priority-high-2-retry-1-fed", 2000, "priority.high.2");
     }
 
     @Bean
     public Queue retryQueueHigh2Level2() {
-        return createRetryQueue("message-queue-high-2.retry.2", 4000, "message.priority.high");
+        return createRetryQueue("inappcommunication.priority-high-2-retry-2-fed", 4000, "priority.high.2");
     }
 
     @Bean
     public Queue retryQueueHigh2Level3() {
-        return createRetryQueue("message-queue-high-2.retry.3", 8000, "message.priority.high");
+        return createRetryQueue("inappcommunication.priority-high-2-retry-3-fed", 8000, "priority.high.2");
     }
 
     // ========== RETRY QUEUES - MEDIUM PRIORITY ==========
 
     @Bean
     public Queue retryQueueMedium1Level1() {
-        return createRetryQueue("message-queue-medium-1.retry.1", 2000, "message.priority.medium");
+        return createRetryQueue("inappcommunication.priority-medium-1-retry-1-fed", 2000, "priority.medium.1");
     }
 
     @Bean
     public Queue retryQueueMedium1Level2() {
-        return createRetryQueue("message-queue-medium-1.retry.2", 4000, "message.priority.medium");
+        return createRetryQueue("inappcommunication.priority-medium-1-retry-2-fed", 4000, "priority.medium.1");
     }
 
     @Bean
     public Queue retryQueueMedium1Level3() {
-        return createRetryQueue("message-queue-medium-1.retry.3", 8000, "message.priority.medium");
+        return createRetryQueue("inappcommunication.priority-medium-1-retry-3-fed", 8000, "priority.medium.1");
     }
 
     @Bean
     public Queue retryQueueMedium2Level1() {
-        return createRetryQueue("message-queue-medium-2.retry.1", 2000, "message.priority.medium");
+        return createRetryQueue("inappcommunication.priority-medium-2-retry-1-fed", 2000, "priority.medium.2");
     }
 
     @Bean
     public Queue retryQueueMedium2Level2() {
-        return createRetryQueue("message-queue-medium-2.retry.2", 4000, "message.priority.medium");
+        return createRetryQueue("inappcommunication.priority-medium-2-retry-2-fed", 4000, "priority.medium.2");
     }
 
     @Bean
     public Queue retryQueueMedium2Level3() {
-        return createRetryQueue("message-queue-medium-2.retry.3", 8000, "message.priority.medium");
+        return createRetryQueue("inappcommunication.priority-medium-2-retry-3-fed", 8000, "priority.medium.2");
     }
 
     // ========== RETRY QUEUES - LOW PRIORITY ==========
 
     @Bean
     public Queue retryQueueLow1Level1() {
-        return createRetryQueue("message-queue-low-1.retry.1", 2000, "message.priority.low");
+        return createRetryQueue("inappcommunication.priority-low-1-retry-1-fed", 2000, "priority.low.1");
     }
 
     @Bean
     public Queue retryQueueLow1Level2() {
-        return createRetryQueue("message-queue-low-1.retry.2", 4000, "message.priority.low");
+        return createRetryQueue("inappcommunication.priority-low-1-retry-2-fed", 4000, "priority.low.1");
     }
 
     @Bean
     public Queue retryQueueLow1Level3() {
-        return createRetryQueue("message-queue-low-1.retry.3", 8000, "message.priority.low");
+        return createRetryQueue("inappcommunication.priority-low-1-retry-3-fed", 8000, "priority.low.1");
     }
 
     @Bean
     public Queue retryQueueLow2Level1() {
-        return createRetryQueue("message-queue-low-2.retry.1", 2000, "message.priority.low");
+        return createRetryQueue("inappcommunication.priority-low-2-retry-1-fed", 2000, "priority.low.2");
     }
 
     @Bean
     public Queue retryQueueLow2Level2() {
-        return createRetryQueue("message-queue-low-2.retry.2", 4000, "message.priority.low");
+        return createRetryQueue("inappcommunication.priority-low-2-retry-2-fed", 4000, "priority.low.2");
     }
 
     @Bean
     public Queue retryQueueLow2Level3() {
-        return createRetryQueue("message-queue-low-2.retry.3", 8000, "message.priority.low");
+        return createRetryQueue("inappcommunication.priority-low-2-retry-3-fed", 8000, "priority.low.2");
     }
 
     // ========== DEAD LETTER QUEUES (DLQ) ==========
 
     @Bean
     public Queue dlqQueueHigh1() {
-        return new Queue("message-queue-high-1.dlq", true);
+        return createDLQ("inappcommunication.priority-high-1-dlq-fed");
     }
 
     @Bean
     public Queue dlqQueueHigh2() {
-        return new Queue("message-queue-high-2.dlq", true);
+        return createDLQ("inappcommunication.priority-high-2-dlq-fed");
     }
 
     @Bean
     public Queue dlqQueueMedium1() {
-        return new Queue("message-queue-medium-1.dlq", true);
+        return createDLQ("inappcommunication.priority-medium-1-dlq-fed");
     }
 
     @Bean
     public Queue dlqQueueMedium2() {
-        return new Queue("message-queue-medium-2.dlq", true);
+        return createDLQ("inappcommunication.priority-medium-2-dlq-fed");
     }
 
     @Bean
     public Queue dlqQueueLow1() {
-        return new Queue("message-queue-low-1.dlq", true);
+        return createDLQ("inappcommunication.priority-low-1-dlq-fed");
     }
 
     @Bean
     public Queue dlqQueueLow2() {
-        return new Queue("message-queue-low-2.dlq", true);
+        return createDLQ("inappcommunication.priority-low-2-dlq-fed");
     }
 
     // ========== BINDINGS - Main Queues to Exchange ==========
@@ -206,7 +209,7 @@ public class RabbitMQConfig {
         return BindingBuilder
                 .bind(messageQueueHigh1())
                 .to(messageExchange())
-                .with("message.priority.high");
+                .with("priority.high.1");
     }
 
     @Bean
@@ -214,7 +217,7 @@ public class RabbitMQConfig {
         return BindingBuilder
                 .bind(messageQueueHigh2())
                 .to(messageExchange())
-                .with("message.priority.high");
+                .with("priority.high.2");
     }
 
     @Bean
@@ -222,7 +225,7 @@ public class RabbitMQConfig {
         return BindingBuilder
                 .bind(messageQueueMedium1())
                 .to(messageExchange())
-                .with("message.priority.medium");
+                .with("priority.medium.1");
     }
 
     @Bean
@@ -230,7 +233,7 @@ public class RabbitMQConfig {
         return BindingBuilder
                 .bind(messageQueueMedium2())
                 .to(messageExchange())
-                .with("message.priority.medium");
+                .with("priority.medium.2");
     }
 
     @Bean
@@ -238,7 +241,7 @@ public class RabbitMQConfig {
         return BindingBuilder
                 .bind(messageQueueLow1())
                 .to(messageExchange())
-                .with("message.priority.low");
+                .with("priority.low.1");
     }
 
     @Bean
@@ -246,49 +249,51 @@ public class RabbitMQConfig {
         return BindingBuilder
                 .bind(messageQueueLow2())
                 .to(messageExchange())
-                .with("message.priority.low");
+                .with("priority.low.2");
     }
 
     // ========== BINDINGS - DLQ to DLX Exchange ==========
 
     @Bean
     public Binding dlqBindingHigh1() {
-        return BindingBuilder.bind(dlqQueueHigh1()).to(dlxExchange()).with("dlq.message-queue-high-1");
+        return BindingBuilder.bind(dlqQueueHigh1()).to(dlxExchange()).with("dlq.high-1");
     }
 
     @Bean
     public Binding dlqBindingHigh2() {
-        return BindingBuilder.bind(dlqQueueHigh2()).to(dlxExchange()).with("dlq.message-queue-high-2");
+        return BindingBuilder.bind(dlqQueueHigh2()).to(dlxExchange()).with("dlq.high-2");
     }
 
     @Bean
     public Binding dlqBindingMedium1() {
-        return BindingBuilder.bind(dlqQueueMedium1()).to(dlxExchange()).with("dlq.message-queue-medium-1");
+        return BindingBuilder.bind(dlqQueueMedium1()).to(dlxExchange()).with("dlq.medium-1");
     }
 
     @Bean
     public Binding dlqBindingMedium2() {
-        return BindingBuilder.bind(dlqQueueMedium2()).to(dlxExchange()).with("dlq.message-queue-medium-2");
+        return BindingBuilder.bind(dlqQueueMedium2()).to(dlxExchange()).with("dlq.medium-2");
     }
 
     @Bean
     public Binding dlqBindingLow1() {
-        return BindingBuilder.bind(dlqQueueLow1()).to(dlxExchange()).with("dlq.message-queue-low-1");
+        return BindingBuilder.bind(dlqQueueLow1()).to(dlxExchange()).with("dlq.low-1");
     }
 
     @Bean
     public Binding dlqBindingLow2() {
-        return BindingBuilder.bind(dlqQueueLow2()).to(dlxExchange()).with("dlq.message-queue-low-2");
+        return BindingBuilder.bind(dlqQueueLow2()).to(dlxExchange()).with("dlq.low-2");
     }
 
     // ========== HELPER METHODS ==========
 
     /**
-     * Create a main queue with lazy mode and DLX configuration
+     * Create a main queue with Quorum type, lazy mode, TTL, and DLX configuration
      */
     private Queue createMainQueue(String queueName, String dlqRoutingKey) {
         Map<String, Object> args = new HashMap<>();
+        args.put("x-queue-type", "quorum"); // Quorum queue for production reliability
         args.put("x-queue-mode", "lazy"); // Store messages on disk for high throughput
+        args.put("x-message-ttl", queueTtl); // 24-hour TTL
         args.put("x-dead-letter-exchange", dlxExchangeName);
         args.put("x-dead-letter-routing-key", dlqRoutingKey);
         return new Queue(queueName, true, false, false, args);
@@ -299,9 +304,19 @@ public class RabbitMQConfig {
      */
     private Queue createRetryQueue(String queueName, int ttlMs, String routingKey) {
         Map<String, Object> args = new HashMap<>();
+        args.put("x-queue-type", "quorum"); // Quorum queue for production reliability
         args.put("x-message-ttl", ttlMs);
         args.put("x-dead-letter-exchange", exchangeName);
         args.put("x-dead-letter-routing-key", routingKey);
+        return new Queue(queueName, true, false, false, args);
+    }
+
+    /**
+     * Create a Dead Letter Queue (DLQ) with Quorum type
+     */
+    private Queue createDLQ(String queueName) {
+        Map<String, Object> args = new HashMap<>();
+        args.put("x-queue-type", "quorum"); // Quorum queue for production reliability
         return new Queue(queueName, true, false, false, args);
     }
 

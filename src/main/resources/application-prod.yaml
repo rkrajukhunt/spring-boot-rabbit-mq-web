@@ -2,21 +2,31 @@ spring:
   application:
     name: rabbitmq-high-throughput-app
 
-  # RabbitMQ Configuration
+  # RabbitMQ Production Configuration
   rabbitmq:
-    host: localhost
-    port: 5672
-    username: admin
-    password: admin123
-    virtual-host: /
+    host: ${RABBITMQ_HOST:rabbitmq-cluster.paychex.com}
+    port: 5671  # AMQP over TLS
+    username: ${RABBITMQ_SERVICE_ACCOUNT_USER}
+    password: ${RABBITMQ_SERVICE_ACCOUNT_PASSWORD}
+    virtual-host: ${RABBITMQ_VHOST:/inappcommunication}
 
-    # Connection pooling for high throughput
+    # TLS/SSL Configuration
+    ssl:
+      enabled: true
+      algorithm: TLSv1.3
+      validate-server-certificate: true
+      trust-store: ${TRUST_STORE_PATH}
+      trust-store-password: ${TRUST_STORE_PASSWORD}
+      trust-store-type: JKS
+
+    # Connection pooling - Production configuration
+    # One connection per pod, multiple channels
     cache:
       connection:
-        mode: channel
-        size: 25  # Connection pool size
+        mode: connection
+        size: 1  # One connection per application instance/pod
       channel:
-        size: 50   # Channel pool size per connection
+        size: 120  # One channel per consumer thread
         checkout-timeout: 10000
 
     # Performance optimizations
@@ -62,11 +72,11 @@ spring:
       receive-timeout: 5000
       reply-timeout: 5000
 
-  # Database Configuration (MSSQL)
+  # Database Configuration (MSSQL) - Production
   datasource:
-    url: jdbc:sqlserver://localhost:1433;databaseName=message_tracking_db;encrypt=true;trustServerCertificate=true
-    username: sa
-    password: YourStrong@Password123
+    url: ${DATABASE_URL}
+    username: ${DATABASE_USERNAME}
+    password: ${DATABASE_PASSWORD}
     driver-class-name: com.microsoft.sqlserver.jdbc.SQLServerDriver
 
     # HikariCP connection pool for high performance
@@ -79,17 +89,17 @@ spring:
       pool-name: MessageTrackingPool
       auto-commit: false
 
-  # JPA Configuration
+  # JPA Configuration - Production
   jpa:
     hibernate:
-      ddl-auto: update  # Use 'create' first time, then 'validate'
+      ddl-auto: validate  # Use validate in production (no auto schema changes)
     show-sql: false
     properties:
       hibernate:
         dialect: org.hibernate.dialect.SQLServerDialect
         format_sql: false
         jdbc:
-          batch_size: 50  # Batch inserts for performance
+          batch_size: 50
           fetch_size: 100
         order_inserts: true
         order_updates: true
@@ -116,33 +126,61 @@ server:
     accept-count: 100
     max-connections: 8192
 
-# Logging
+# Actuator configuration for health checks and monitoring
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus,rabbitmq
+      base-path: /actuator
+  endpoint:
+    health:
+      show-details: always
+      probes:
+        enabled: true
+  health:
+    rabbitmq:
+      enabled: true
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+
+# Logging - Production
 logging:
   level:
     root: INFO
-    com.example.demo: DEBUG
-    org.springframework.amqp: INFO
+    com.example.demo: INFO
+    org.springframework.amqp: WARN
     org.hibernate.SQL: WARN
   pattern:
     console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+  file:
+    name: /var/log/rabbitmq-app/application.log
+    max-size: 100MB
+    max-history: 30
 
-# Custom Application Properties
+# Custom Application Properties - Production
 app:
   rabbitmq:
-    # Exchange configuration
+    # Exchange configuration with federation support
     exchange:
       name: inappcommunication.communication-fed
-      type: direct
+      type: direct  # Direct exchange for production
       durable: true
       dlx-name: inappcommunication.communication-dlx-fed
 
     # Queue configuration
     queue:
       ttl: 86400000  # 24 hours in milliseconds
+      prefix: inappcommunication.priority
+      suffix: -fed
 
     # Retry configuration
     retry:
       max-attempts: 3
+      base-delay: 1000  # 1 second base
+      use-jitter: false  # Fixed delays for now
       delays:
         - 2000   # 2 seconds
         - 4000   # 4 seconds
