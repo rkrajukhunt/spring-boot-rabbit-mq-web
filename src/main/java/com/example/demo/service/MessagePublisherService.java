@@ -23,13 +23,16 @@ public class MessagePublisherService {
 
     private final RabbitTemplate rabbitTemplate;
     private final TrackingService trackingService;
-    private final LoadBalancerService loadBalancerService;
 
     @Value("${app.rabbitmq.exchange.name}")
     private String exchangeName;
 
+    private static final String ROUTING_KEY = "messages.priority";
+    private static final String QUEUE_NAME = "inappcommunication.messages-fed";
+
     /**
-     * Publish message to RabbitMQ with automatic priority assignment and load balancing
+     * Publish message to RabbitMQ priority queue with automatic priority assignment
+     * Uses RabbitMQ native priority queue (x-max-priority=10)
      */
     public void publishMessage(String trackingId, MessageRequest request) {
         // Auto-assign priority if not provided (default: MEDIUM)
@@ -38,12 +41,6 @@ public class MessagePublisherService {
         if (request.getPriority() == null) {
             log.debug("Priority not provided for message {}, auto-assigned to MEDIUM", trackingId);
         }
-
-        // Use load balancer to select the best queue from available queues for this priority
-        String selectedQueue = loadBalancerService.selectQueue(priority);
-
-        // Determine routing key based on selected queue
-        String routingKey = priority.getRoutingKeyForQueue(selectedQueue);
 
         // Build message payload
         MessagePayload payload = MessagePayload.builder()
@@ -59,13 +56,13 @@ public class MessagePublisherService {
         CorrelationData correlationData = new CorrelationData(trackingId);
 
         try {
-            // Publish to RabbitMQ
+            // Publish to RabbitMQ priority queue
             rabbitTemplate.convertAndSend(
                     exchangeName,
-                    routingKey,
+                    ROUTING_KEY,
                     payload,
                     message -> {
-                        // Set message properties
+                        // Set message properties including priority (0-10, where 10 is highest)
                         message.getMessageProperties().setCorrelationId(trackingId);
                         message.getMessageProperties().setPriority(priority.getPriorityValue());
                         message.getMessageProperties().setDeliveryMode(MessageDeliveryMode.PERSISTENT);
@@ -75,10 +72,10 @@ public class MessagePublisherService {
             );
 
             // Update tracking with queue name
-            trackingService.updateQueueName(trackingId, selectedQueue);
+            trackingService.updateQueueName(trackingId, QUEUE_NAME);
 
-            log.info("Published message {} to exchange {} with routing key {} (selected queue: {}, priority: {})",
-                    trackingId, exchangeName, routingKey, selectedQueue, priority);
+            log.info("Published message {} to exchange {} with priority {} (value={})",
+                    trackingId, exchangeName, priority.name(), priority.getPriorityValue());
 
         } catch (AmqpException e) {
             log.error("Failed to publish message {} to RabbitMQ", trackingId, e);

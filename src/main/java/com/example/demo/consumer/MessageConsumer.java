@@ -30,102 +30,44 @@ public class MessageConsumer {
     @Value("${app.rabbitmq.retry.max-attempts}")
     private int maxRetryAttempts;
 
-    // ========== MAIN QUEUE CONSUMERS (6 queues: 2 per priority) ==========
+    private static final String QUEUE_NAME = "inappcommunication.messages-fed";
+
+    // ========== MAIN PRIORITY QUEUE CONSUMER ==========
 
     /**
-     * Consumer for High Priority Queue 1
-     * Concurrency: 10-20 threads
+     * Consumer for the single priority queue with RabbitMQ native priority support
+     *
+     * Concurrency: 50-100 threads (scalable based on load)
+     * RabbitMQ automatically processes HIGH priority messages first
+     *
+     * Multi-Pod Architecture:
+     * - Each pod runs 50-100 consumer threads
+     * - All pods compete for messages from the same queue
+     * - RabbitMQ distributes messages across all consumers from all pods
+     * - Priority ordering is maintained: HIGH messages delivered first
+     *
+     * Horizontal Scaling:
+     * - 1 pod  = 50-100 consumers  = ~10M msgs/day (1s processing)
+     * - 3 pods = 150-300 consumers = ~30M msgs/day (1s processing)
+     * - N pods = N × 50-100 consumers (linear scaling)
      */
     @RabbitListener(
-            queues = "inappcommunication.priority-high-1-fed",
-            concurrency = "10-20",
+            queues = QUEUE_NAME,
+            concurrency = "50-100",
             containerFactory = "rabbitListenerContainerFactory"
     )
-    public void consumeHighQueue1(
+    public void consumePriorityQueue(
             @Payload MessagePayload payload,
             @Header(AmqpHeaders.DELIVERY_TAG) long deliveryTag,
+            @Header(value = AmqpHeaders.PRIORITY, required = false) Integer messagePriority,
             Channel channel) throws IOException {
-        processMessage(payload, deliveryTag, channel, "inappcommunication.priority-high-1-fed");
-    }
 
-    /**
-     * Consumer for High Priority Queue 2
-     * Concurrency: 10-20 threads
-     */
-    @RabbitListener(
-            queues = "inappcommunication.priority-high-2-fed",
-            concurrency = "10-20",
-            containerFactory = "rabbitListenerContainerFactory"
-    )
-    public void consumeHighQueue2(
-            @Payload MessagePayload payload,
-            @Header(AmqpHeaders.DELIVERY_TAG) long deliveryTag,
-            Channel channel) throws IOException {
-        processMessage(payload, deliveryTag, channel, "inappcommunication.priority-high-2-fed");
-    }
+        // Log message priority for monitoring
+        if (messagePriority != null) {
+            log.debug("Processing message {} with priority {}", payload.getTrackingId(), messagePriority);
+        }
 
-    /**
-     * Consumer for Medium Priority Queue 1
-     * Concurrency: 10-20 threads
-     */
-    @RabbitListener(
-            queues = "inappcommunication.priority-medium-1-fed",
-            concurrency = "10-20",
-            containerFactory = "rabbitListenerContainerFactory"
-    )
-    public void consumeMediumQueue1(
-            @Payload MessagePayload payload,
-            @Header(AmqpHeaders.DELIVERY_TAG) long deliveryTag,
-            Channel channel) throws IOException {
-        processMessage(payload, deliveryTag, channel, "inappcommunication.priority-medium-1-fed");
-    }
-
-    /**
-     * Consumer for Medium Priority Queue 2
-     * Concurrency: 10-20 threads
-     */
-    @RabbitListener(
-            queues = "inappcommunication.priority-medium-2-fed",
-            concurrency = "10-20",
-            containerFactory = "rabbitListenerContainerFactory"
-    )
-    public void consumeMediumQueue2(
-            @Payload MessagePayload payload,
-            @Header(AmqpHeaders.DELIVERY_TAG) long deliveryTag,
-            Channel channel) throws IOException {
-        processMessage(payload, deliveryTag, channel, "inappcommunication.priority-medium-2-fed");
-    }
-
-    /**
-     * Consumer for Low Priority Queue 1
-     * Concurrency: 10-20 threads
-     */
-    @RabbitListener(
-            queues = "inappcommunication.priority-low-1-fed",
-            concurrency = "10-20",
-            containerFactory = "rabbitListenerContainerFactory"
-    )
-    public void consumeLowQueue1(
-            @Payload MessagePayload payload,
-            @Header(AmqpHeaders.DELIVERY_TAG) long deliveryTag,
-            Channel channel) throws IOException {
-        processMessage(payload, deliveryTag, channel, "inappcommunication.priority-low-1-fed");
-    }
-
-    /**
-     * Consumer for Low Priority Queue 2
-     * Concurrency: 10-20 threads
-     */
-    @RabbitListener(
-            queues = "inappcommunication.priority-low-2-fed",
-            concurrency = "10-20",
-            containerFactory = "rabbitListenerContainerFactory"
-    )
-    public void consumeLowQueue2(
-            @Payload MessagePayload payload,
-            @Header(AmqpHeaders.DELIVERY_TAG) long deliveryTag,
-            Channel channel) throws IOException {
-        processMessage(payload, deliveryTag, channel, "inappcommunication.priority-low-2-fed");
+        processMessage(payload, deliveryTag, channel, QUEUE_NAME);
     }
 
     // ========== MESSAGE PROCESSING LOGIC ==========
@@ -187,14 +129,18 @@ public class MessageConsumer {
             int nextRetry = currentRetry + 1;
             payload.setRetryCount(nextRetry);
 
-            // Build retry queue name: queue-name without -fed + -retry-N-fed
-            String retryQueue = queueName.replace("-fed", "") + "-retry-" + nextRetry + "-fed";
+            // Retry queue name: inappcommunication.messages-retry-{1,2,3}-fed
+            String retryQueue = "inappcommunication.messages-retry-" + nextRetry + "-fed";
 
             log.warn("Message {} failed, attempt {}/{}. Sending to retry queue: {}",
                     trackingId, nextRetry, maxRetryAttempts, retryQueue);
 
-            // Publish to retry queue
-            rabbitTemplate.convertAndSend(retryQueue, payload);
+            // Publish to retry queue with same priority
+            rabbitTemplate.convertAndSend(retryQueue, payload, message -> {
+                // Preserve original priority during retry
+                message.getMessageProperties().setPriority(payload.getPriority().getPriorityValue());
+                return message;
+            });
 
             // Acknowledge original message (won't be reprocessed)
             channel.basicAck(deliveryTag, false);
@@ -205,13 +151,17 @@ public class MessageConsumer {
 
         } else {
             // Max retries exhausted - send to DLQ
-            String dlqQueue = queueName.replace("-fed", "") + "-dlq-fed";
+            String dlqQueue = "inappcommunication.messages-dlq-fed";
 
             log.error("Message {} exhausted all {} retries. Sending to DLQ: {}",
                     trackingId, maxRetryAttempts, dlqQueue);
 
-            // Publish to DLQ
-            rabbitTemplate.convertAndSend(dlqQueue, payload);
+            // Publish to DLQ with original priority for analysis
+            rabbitTemplate.convertAndSend(dlqQueue, payload, message -> {
+                // Preserve original priority in DLQ for analysis
+                message.getMessageProperties().setPriority(payload.getPriority().getPriorityValue());
+                return message;
+            });
 
             // Acknowledge original message
             channel.basicAck(deliveryTag, false);
@@ -225,65 +175,30 @@ public class MessageConsumer {
         }
     }
 
-    // ========== DEAD LETTER QUEUE LISTENERS (Monitoring) ==========
+    // ========== DEAD LETTER QUEUE LISTENER (Monitoring) ==========
 
     /**
-     * Monitor DLQ for High Priority Queue 1
+     * Monitor DLQ for messages that exhausted all retries
+     * Logs failed messages for manual investigation and potential replay
      */
-    @RabbitListener(queues = "inappcommunication.priority-high-1-dlq-fed")
-    public void handleDLQHigh1(@Payload MessagePayload payload, Message message) {
-        logDLQMessage(payload, "inappcommunication.priority-high-1-fed");
-    }
+    @RabbitListener(queues = "inappcommunication.messages-dlq-fed")
+    public void handleDLQ(
+            @Payload MessagePayload payload,
+            @Header(value = AmqpHeaders.PRIORITY, required = false) Integer messagePriority,
+            Message message) {
 
-    /**
-     * Monitor DLQ for High Priority Queue 2
-     */
-    @RabbitListener(queues = "inappcommunication.priority-high-2-dlq-fed")
-    public void handleDLQHigh2(@Payload MessagePayload payload, Message message) {
-        logDLQMessage(payload, "inappcommunication.priority-high-2-fed");
-    }
-
-    /**
-     * Monitor DLQ for Medium Priority Queue 1
-     */
-    @RabbitListener(queues = "inappcommunication.priority-medium-1-dlq-fed")
-    public void handleDLQMedium1(@Payload MessagePayload payload, Message message) {
-        logDLQMessage(payload, "inappcommunication.priority-medium-1-fed");
-    }
-
-    /**
-     * Monitor DLQ for Medium Priority Queue 2
-     */
-    @RabbitListener(queues = "inappcommunication.priority-medium-2-dlq-fed")
-    public void handleDLQMedium2(@Payload MessagePayload payload, Message message) {
-        logDLQMessage(payload, "inappcommunication.priority-medium-2-fed");
-    }
-
-    /**
-     * Monitor DLQ for Low Priority Queue 1
-     */
-    @RabbitListener(queues = "inappcommunication.priority-low-1-dlq-fed")
-    public void handleDLQLow1(@Payload MessagePayload payload, Message message) {
-        logDLQMessage(payload, "inappcommunication.priority-low-1-fed");
-    }
-
-    /**
-     * Monitor DLQ for Low Priority Queue 2
-     */
-    @RabbitListener(queues = "inappcommunication.priority-low-2-dlq-fed")
-    public void handleDLQLow2(@Payload MessagePayload payload, Message message) {
-        logDLQMessage(payload, "inappcommunication.priority-low-2-fed");
-    }
-
-    /**
-     * Helper method to log DLQ messages
-     */
-    private void logDLQMessage(MessagePayload payload, String sourceQueue) {
-        log.error("Message {} in DLQ for {}. Priority: {}, RetryCount: {}, Payload: {}",
-                payload.getTrackingId(), sourceQueue, payload.getPriority(),
-                payload.getRetryCount(), payload.getPayload());
+        log.error("Message {} in DLQ. Priority: {} (value={}), RetryCount: {}, Payload: {}",
+                payload.getTrackingId(),
+                payload.getPriority(),
+                messagePriority,
+                payload.getRetryCount(),
+                payload.getPayload());
 
         // Optional: Add alerting, special logging, or manual intervention trigger
-        // Example: send email, trigger PagerDuty, write to special audit table
+        // Examples:
+        // - Send email/Slack notification
+        // - Trigger PagerDuty alert for HIGH priority failures
+        // - Write to special audit table for compliance
+        // - Store in dead letter storage for replay mechanism
     }
 }
