@@ -30,9 +30,9 @@ spring:
     # Listener configuration
     listener:
       simple:
-        # Consumer concurrency (threads per queue)
-        concurrency: 10
-        max-concurrency: 20
+        # Consumer concurrency (threads for single priority queue)
+        concurrency: 50
+        max-concurrency: 100
 
         # Prefetch count (messages fetched per consumer)
         prefetch: 50

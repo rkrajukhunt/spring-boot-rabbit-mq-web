@@ -208,9 +208,9 @@ public class RabbitMQConfig {
         factory.setConnectionFactory(connectionFactory);
         factory.setMessageConverter(jackson2JsonMessageConverter());
 
-        // Concurrency: 10-20 threads per queue
-        factory.setConcurrentConsumers(10);
-        factory.setMaxConcurrentConsumers(20);
+        // Concurrency: 50-100 threads for single priority queue
+        factory.setConcurrentConsumers(50);
+        factory.setMaxConcurrentConsumers(100);
 
         // Prefetch: 50 messages per consumer
         factory.setPrefetchCount(50);
@@ -221,7 +221,7 @@ public class RabbitMQConfig {
         // Default requeue on failure = false (we handle retries manually)
         factory.setDefaultRequeueRejected(false);
 
-        log.info("RabbitMQ Listener Container Factory configured: 6 queues (2 per priority), concurrency: 10-20, prefetch: 50, manual ACK");
+        log.info("RabbitMQ Listener Container Factory configured: Single priority queue, concurrency: 50-100, prefetch: 50, manual ACK");
 
         return factory;
     }

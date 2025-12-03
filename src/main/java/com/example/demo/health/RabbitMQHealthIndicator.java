@@ -1,6 +1,6 @@
 package com.example.demo.health;
 
-import com.example.demo.service.LoadBalancerService;
+import com.example.demo.service.QueueMonitoringService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.rabbit.core.RabbitAdmin;
@@ -20,19 +20,14 @@ public class RabbitMQHealthIndicator implements HealthIndicator {
 
     private final RabbitAdmin rabbitAdmin;
     private final RabbitTemplate rabbitTemplate;
-    private final LoadBalancerService loadBalancerService;
+    private final QueueMonitoringService queueMonitoringService;
 
-    private static final List<String> QUEUE_NAMES = List.of(
-            "inappcommunication.priority-high-1-fed",
-            "inappcommunication.priority-high-2-fed",
-            "inappcommunication.priority-medium-1-fed",
-            "inappcommunication.priority-medium-2-fed",
-            "inappcommunication.priority-low-1-fed",
-            "inappcommunication.priority-low-2-fed"
-    );
+    // Single priority queue
+    private static final String MAIN_QUEUE = "inappcommunication.messages-fed";
+    private static final List<String> QUEUE_NAMES = List.of(MAIN_QUEUE);
 
     private static final int MAX_QUEUE_DEPTH_THRESHOLD = 10000;
-    private static final int MIN_TOTAL_CONSUMERS = 60;  // Should be 120 ideally
+    private static final int MIN_TOTAL_CONSUMERS = 50;  // Minimum 50 per pod
 
     @Override
     public Health health() {
@@ -69,7 +64,7 @@ public class RabbitMQHealthIndicator implements HealthIndicator {
             if (totalConsumers < MIN_TOTAL_CONSUMERS) {
                 return Health.down()
                         .withDetail("error", "Consumer count below threshold")
-                        .withDetail("expected", 120)
+                        .withDetail("expected", "50-100 per pod")
                         .withDetail("minimum", MIN_TOTAL_CONSUMERS)
                         .withDetail("actual", totalConsumers)
                         .withDetail("consumerCounts", consumerCounts)
@@ -79,6 +74,7 @@ public class RabbitMQHealthIndicator implements HealthIndicator {
             // All checks passed
             return Health.up()
                     .withDetail("connection", "CONNECTED")
+                    .withDetail("queueName", MAIN_QUEUE)
                     .withDetail("totalConsumers", totalConsumers)
                     .withDetail("maxQueueDepth", maxDepth)
                     .withDetail("queueDepths", queueDepths)
@@ -114,7 +110,7 @@ public class RabbitMQHealthIndicator implements HealthIndicator {
         Map<String, Integer> depths = new HashMap<>();
         for (String queueName : QUEUE_NAMES) {
             try {
-                LoadBalancerService.QueueStats stats = loadBalancerService.getQueueStats(queueName);
+                QueueMonitoringService.QueueStats stats = queueMonitoringService.getQueueStats(queueName);
                 depths.put(queueName, stats.messageCount());
             } catch (Exception e) {
                 log.warn("Failed to get depth for queue {}: {}", queueName, e.getMessage());
@@ -131,7 +127,7 @@ public class RabbitMQHealthIndicator implements HealthIndicator {
         Map<String, Integer> counts = new HashMap<>();
         for (String queueName : QUEUE_NAMES) {
             try {
-                LoadBalancerService.QueueStats stats = loadBalancerService.getQueueStats(queueName);
+                QueueMonitoringService.QueueStats stats = queueMonitoringService.getQueueStats(queueName);
                 counts.put(queueName, stats.consumerCount());
             } catch (Exception e) {
                 log.warn("Failed to get consumer count for queue {}: {}", queueName, e.getMessage());
