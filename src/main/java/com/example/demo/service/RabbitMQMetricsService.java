@@ -4,6 +4,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.rabbit.core.RabbitAdmin;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
@@ -33,10 +34,15 @@ public class RabbitMQMetricsService {
     private static final String MAIN_QUEUE = "inappcommunication.messages-fed";
     private static final List<String> ALL_QUEUES = List.of(MAIN_QUEUE);
 
-    // Thresholds
-    private static final int MAX_QUEUE_DEPTH_THRESHOLD = 10000;
-    private static final int MIN_CONSUMERS_PER_POD = 50;
-    private static final int MAX_CONSUMERS_PER_POD = 100;
+    // Thresholds - Read from configuration
+    @Value("${app.rabbitmq.monitoring.max-queue-depth:10000}")
+    private int maxQueueDepthThreshold;
+
+    @Value("${spring.rabbitmq.listener.simple.concurrency:50}")
+    private int minConsumersPerPod;
+
+    @Value("${spring.rabbitmq.listener.simple.max-concurrency:100}")
+    private int maxConsumersPerPod;
 
     /**
      * Get statistics for a specific queue
@@ -101,27 +107,27 @@ public class RabbitMQMetricsService {
             QueueStats mainQueueStats = getQueueStats(MAIN_QUEUE);
 
             // Check queue depth
-            if (mainQueueStats.messageCount() > MAX_QUEUE_DEPTH_THRESHOLD) {
+            if (mainQueueStats.messageCount() > maxQueueDepthThreshold) {
                 return new HealthStatus(
                     HealthState.DEGRADED,
                     "Queue depth exceeds threshold",
                     Map.of(
                         "queueDepth", mainQueueStats.messageCount(),
-                        "threshold", MAX_QUEUE_DEPTH_THRESHOLD,
+                        "threshold", maxQueueDepthThreshold,
                         "consumerCount", mainQueueStats.consumerCount()
                     )
                 );
             }
 
             // Check consumer count
-            if (mainQueueStats.consumerCount() < MIN_CONSUMERS_PER_POD) {
+            if (mainQueueStats.consumerCount() < minConsumersPerPod) {
                 return new HealthStatus(
                     HealthState.DEGRADED,
                     "Consumer count below minimum threshold",
                     Map.of(
                         "actual", mainQueueStats.consumerCount(),
-                        "minimum", MIN_CONSUMERS_PER_POD,
-                        "expected", MIN_CONSUMERS_PER_POD + "-" + MAX_CONSUMERS_PER_POD
+                        "minimum", minConsumersPerPod,
+                        "expected", minConsumersPerPod + "-" + maxConsumersPerPod
                     )
                 );
             }
@@ -208,9 +214,9 @@ public class RabbitMQMetricsService {
      */
     public Thresholds getThresholds() {
         return new Thresholds(
-            MAX_QUEUE_DEPTH_THRESHOLD,
-            MIN_CONSUMERS_PER_POD,
-            MAX_CONSUMERS_PER_POD
+            maxQueueDepthThreshold,
+            minConsumersPerPod,
+            maxConsumersPerPod
         );
     }
 

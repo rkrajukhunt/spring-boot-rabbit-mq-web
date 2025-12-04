@@ -187,6 +187,10 @@ app:
         - 4000   # 4 seconds
         - 8000   # 8 seconds
 
+    # Monitoring configuration
+    monitoring:
+      max-queue-depth: 10000  # Alert when queue has more than 10K messages
+
   # Tracking
   tracking:
     id-prefix: MSG

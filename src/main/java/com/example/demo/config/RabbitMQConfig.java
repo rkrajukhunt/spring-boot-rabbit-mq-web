@@ -21,22 +21,37 @@ public class RabbitMQConfig {
     @Value("${app.rabbitmq.exchange.name}")
     private String exchangeName;
 
+    @Value("${app.rabbitmq.exchange.type:direct}")
+    private String exchangeType;
+
+    @Value("${app.rabbitmq.exchange.durable:true}")
+    private boolean exchangeDurable;
+
     @Value("${app.rabbitmq.exchange.dlx-name}")
     private String dlxExchangeName;
 
     @Value("${app.rabbitmq.queue.ttl:86400000}")
     private long queueTtl; // 24 hours default
 
+    @Value("${spring.rabbitmq.listener.simple.concurrency:50}")
+    private int concurrentConsumers;
+
+    @Value("${spring.rabbitmq.listener.simple.max-concurrency:100}")
+    private int maxConcurrentConsumers;
+
+    @Value("${spring.rabbitmq.listener.simple.prefetch:50}")
+    private int prefetchCount;
+
     // ========== EXCHANGES ==========
 
     @Bean
     public DirectExchange messageExchange() {
-        return new DirectExchange(exchangeName, true, false);
+        return new DirectExchange(exchangeName, exchangeDurable, false);
     }
 
     @Bean
     public DirectExchange dlxExchange() {
-        return new DirectExchange(dlxExchangeName, true, false);
+        return new DirectExchange(dlxExchangeName, exchangeDurable, false);
     }
 
     // ========== MAIN PRIORITY QUEUE ==========
@@ -208,12 +223,12 @@ public class RabbitMQConfig {
         factory.setConnectionFactory(connectionFactory);
         factory.setMessageConverter(jackson2JsonMessageConverter());
 
-        // Concurrency: 50-100 threads for single priority queue
-        factory.setConcurrentConsumers(50);
-        factory.setMaxConcurrentConsumers(100);
+        // Concurrency: Read from configuration
+        factory.setConcurrentConsumers(concurrentConsumers);
+        factory.setMaxConcurrentConsumers(maxConcurrentConsumers);
 
-        // Prefetch: 50 messages per consumer
-        factory.setPrefetchCount(50);
+        // Prefetch: Read from configuration
+        factory.setPrefetchCount(prefetchCount);
 
         // Manual acknowledgment for reliability
         factory.setAcknowledgeMode(AcknowledgeMode.MANUAL);
@@ -221,7 +236,8 @@ public class RabbitMQConfig {
         // Default requeue on failure = false (we handle retries manually)
         factory.setDefaultRequeueRejected(false);
 
-        log.info("RabbitMQ Listener Container Factory configured: Single priority queue, concurrency: 50-100, prefetch: 50, manual ACK");
+        log.info("RabbitMQ Listener Container Factory configured: Single priority queue, concurrency: {}-{}, prefetch: {}, manual ACK",
+                concurrentConsumers, maxConcurrentConsumers, prefetchCount);
 
         return factory;
     }
