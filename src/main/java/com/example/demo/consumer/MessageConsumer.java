@@ -1,6 +1,7 @@
 package com.example.demo.consumer;
 
 import com.example.demo.enums.MessageStatus;
+import com.example.demo.exception.MessageProcessingException;
 import com.example.demo.model.dto.MessagePayload;
 import com.example.demo.service.CommunicationService;
 import com.example.demo.service.TrackingService;
@@ -17,6 +18,7 @@ import org.springframework.messaging.handler.annotation.Payload;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
+import java.util.concurrent.*;
 
 @Component
 @Slf4j
@@ -29,6 +31,9 @@ public class MessageConsumer {
 
     @Value("${app.rabbitmq.retry.max-attempts}")
     private int maxRetryAttempts;
+
+    @Value("${app.messaging.async.processing.timeout-ms:30000}")
+    private long processingTimeoutMs;
 
     private static final String QUEUE_NAME = "inappcommunication.messages-fed";
 
@@ -59,7 +64,7 @@ public class MessageConsumer {
     public void consumePriorityQueue(
             @Payload MessagePayload payload,
             @Header(AmqpHeaders.DELIVERY_TAG) long deliveryTag,
-            @Header(value = AmqpHeaders.PRIORITY, required = false) Integer messagePriority,
+            @Header(value = "priority", required = false) Integer messagePriority,
             Channel channel) throws IOException {
 
         // Log message priority for monitoring
@@ -74,6 +79,7 @@ public class MessageConsumer {
 
     /**
      * Core message processing logic (shared by all consumers)
+     * Includes timeout handling to prevent long-running messages from blocking consumers
      */
     private void processMessage(
             MessagePayload payload,
@@ -82,30 +88,50 @@ public class MessageConsumer {
             String queueName) throws IOException {
 
         String trackingId = payload.getTrackingId();
+        ExecutorService timeoutExecutor = Executors.newSingleThreadExecutor();
 
         try {
-            log.info("Processing message {} from queue {}", trackingId, queueName);
+            log.info("Processing message {} from queue {} with timeout {}ms",
+                    trackingId, queueName, processingTimeoutMs);
 
             // Update status to PROCESSING
             trackingService.updateStatus(trackingId, MessageStatus.PROCESSING, null);
 
-            // Call the heavy business logic (createCommunication)
-            communicationService.createCommunication(payload);
+            // Execute with timeout
+            Future<?> future = timeoutExecutor.submit(() -> {
+                communicationService.createCommunication(payload);
+            });
 
-            // Update status to COMPLETED
-            trackingService.updateStatus(trackingId, MessageStatus.COMPLETED, null);
-            trackingService.markCompleted(trackingId);
+            try {
+                // Wait for completion with timeout
+                future.get(processingTimeoutMs, TimeUnit.MILLISECONDS);
 
-            // Acknowledge message (success)
-            channel.basicAck(deliveryTag, false);
+                // Update status to COMPLETED
+                trackingService.updateStatus(trackingId, MessageStatus.COMPLETED, null);
+                trackingService.markCompleted(trackingId);
 
-            log.info("Successfully processed message {} from queue {}", trackingId, queueName);
+                // Acknowledge message (success)
+                channel.basicAck(deliveryTag, false);
+
+                log.info("Successfully processed message {} from queue {}", trackingId, queueName);
+
+            } catch (TimeoutException e) {
+                // Cancel the task
+                future.cancel(true);
+                log.error("Processing timeout for message {} after {}ms", trackingId, processingTimeoutMs);
+
+                // Handle timeout as processing error (will retry)
+                handleProcessingError(payload, deliveryTag, channel, queueName,
+                        new MessageProcessingException("Processing timeout after " + processingTimeoutMs + "ms"));
+            }
 
         } catch (Exception e) {
             log.error("Error processing message {} from queue {}", trackingId, queueName, e);
 
             // Handle error with retry logic
             handleProcessingError(payload, deliveryTag, channel, queueName, e);
+        } finally {
+            timeoutExecutor.shutdown();
         }
     }
 
@@ -184,7 +210,7 @@ public class MessageConsumer {
     @RabbitListener(queues = "inappcommunication.messages-dlq-fed")
     public void handleDLQ(
             @Payload MessagePayload payload,
-            @Header(value = AmqpHeaders.PRIORITY, required = false) Integer messagePriority,
+            @Header(value = "priority", required = false) Integer messagePriority,
             Message message) {
 
         log.error("Message {} in DLQ. Priority: {} (value={}), RetryCount: {}, Payload: {}",
