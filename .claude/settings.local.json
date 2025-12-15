@@ -3,7 +3,10 @@
     "allow": [
       "Bash(dir /s \"c:\\Users\\RajuKhunt\\Downloads\\rabbitmq-demo\\rabbit-mq-demo\\src\\main\\java\\com\\example\\demo\")",
       "Bash(tree:*)",
-      "Bash(dir:*)"
+      "Bash(dir:*)",
+      "Bash(mvn clean compile:*)",
+      "Bash(./mvnw clean compile:*)",
+      "Bash(chmod:*)"
     ],
     "deny": [],
     "ask": []

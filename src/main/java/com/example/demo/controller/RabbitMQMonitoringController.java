@@ -1,243 +1,240 @@
 package com.example.demo.controller;
 
-import com.example.demo.service.LoadBalancerService;
+import com.example.demo.service.RabbitMQMetricsService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.*;
-import java.util.stream.Collectors;
 
+/**
+ * Custom RabbitMQ Monitoring Controller
+ *
+ * Provides detailed RabbitMQ metrics endpoints for monitoring and alerting
+ * Uses RabbitMQMetricsService for all monitoring logic
+ *
+ * Endpoints:
+ * - GET /actuator/rabbitmq/metrics - Comprehensive metrics
+ * - GET /actuator/rabbitmq/health - Health status
+ * - GET /actuator/rabbitmq/queue/{queueName} - Specific queue stats
+ * - GET /actuator/rabbitmq/queue-depth - Main queue depth
+ * - GET /actuator/rabbitmq/consumer-count - Consumer count
+ */
 @RestController
 @RequestMapping("/actuator/rabbitmq")
 @RequiredArgsConstructor
 @Slf4j
 public class RabbitMQMonitoringController {
 
-    private final LoadBalancerService loadBalancerService;
+    private final RabbitMQMetricsService metricsService;
 
-    private static final List<String> MAIN_QUEUE_NAMES = List.of(
-            "inappcommunication.priority-high-1-fed",
-            "inappcommunication.priority-high-2-fed",
-            "inappcommunication.priority-medium-1-fed",
-            "inappcommunication.priority-medium-2-fed",
-            "inappcommunication.priority-low-1-fed",
-            "inappcommunication.priority-low-2-fed"
-    );
+    // JSON response constants
+    private static final String KEY_QUEUE_NAME = "queueName";
+    private static final String KEY_STATUS = "status";
+    private static final String KEY_ERROR = "error";
+    private static final String KEY_TIMESTAMP = "timestamp";
+    private static final String KEY_MESSAGE_COUNT = "messageCount";
+    private static final String KEY_CONSUMER_COUNT = "consumerCount";
+
+    // Status constants
+    private static final String STATUS_HEALTHY = "HEALTHY";
+    private static final String STATUS_DEGRADED = "DEGRADED";
+    private static final String STATUS_ERROR = "ERROR";
+    private static final String STATUS_DOWN = "DOWN";
+    private static final String STATUS_OK = "OK";
+    private static final String STATUS_OVERLOADED = "OVERLOADED";
 
     /**
      * Get comprehensive RabbitMQ metrics
+     * Use for Prometheus/Grafana dashboards
      */
     @GetMapping("/metrics")
     public Map<String, Object> getMetrics() {
-        Map<String, Object> metrics = new HashMap<>();
-
         try {
-            // Queue metrics
-            Map<String, LoadBalancerService.QueueStats> queueStats = getAllQueueMetrics();
-            metrics.put("queues", queueStats);
+            RabbitMQMetricsService.RabbitMQMetrics metrics = metricsService.getMetrics();
+            RabbitMQMetricsService.Thresholds thresholds = metricsService.getThresholds();
 
-            // Summary statistics
-            int totalMessages = queueStats.values().stream()
-                    .mapToInt(LoadBalancerService.QueueStats::messageCount)
-                    .sum();
+            Map<String, Object> response = new HashMap<>();
+            response.put(KEY_QUEUE_NAME, metrics.queueStats().queueName());
+            response.put(KEY_MESSAGE_COUNT, metrics.queueStats().messageCount());
+            response.put(KEY_CONSUMER_COUNT, metrics.queueStats().consumerCount());
+            response.put("healthState", metrics.healthState().name());
+            response.put("connectionHealthy", metrics.connectionHealthy());
+            response.put(KEY_TIMESTAMP, metrics.timestamp());
+            response.put("thresholds", Map.of(
+                "maxQueueDepth", thresholds.maxQueueDepth(),
+                "minConsumers", thresholds.minConsumers(),
+                "maxConsumers", thresholds.maxConsumers()
+            ));
 
-            int totalConsumers = queueStats.values().stream()
-                    .mapToInt(LoadBalancerService.QueueStats::consumerCount)
-                    .sum();
-
-            metrics.put("totalMessages", totalMessages);
-            metrics.put("totalConsumers", totalConsumers);
-            metrics.put("expectedConsumers", 120);
-            metrics.put("timestamp", System.currentTimeMillis());
-            metrics.put("status", totalConsumers >= 60 ? "HEALTHY" : "DEGRADED");
+            return response;
 
         } catch (Exception e) {
             log.error("Failed to get metrics", e);
-            metrics.put("error", e.getMessage());
-            metrics.put("status", "ERROR");
+            return Map.of(
+                KEY_ERROR, e.getMessage(),
+                KEY_STATUS, STATUS_ERROR,
+                KEY_TIMESTAMP, System.currentTimeMillis()
+            );
         }
+    }
 
-        return metrics;
+    /**
+     * Get health status
+     * Simplified endpoint for load balancer health checks
+     */
+    @GetMapping("/health")
+    public Map<String, Object> getHealth() {
+        try {
+            RabbitMQMetricsService.HealthStatus healthStatus = metricsService.getHealthStatus();
+            RabbitMQMetricsService.QueueStats queueStats = metricsService.getQueueStats(metricsService.getMainQueueName());
+
+            Map<String, Object> response = new HashMap<>();
+            response.put(KEY_STATUS, healthStatus.state().name());
+            response.put("message", healthStatus.message());
+            response.put(KEY_QUEUE_NAME, metricsService.getMainQueueName());
+            response.put(KEY_CONSUMER_COUNT, queueStats.consumerCount());
+            response.put("queueDepth", queueStats.messageCount());
+            response.put("connectionHealthy", metricsService.isConnectionHealthy());
+            response.put(KEY_TIMESTAMP, System.currentTimeMillis());
+
+            if (healthStatus.details() != null) {
+                response.put("details", healthStatus.details());
+            }
+
+            return response;
+
+        } catch (Exception e) {
+            log.error("Health check failed", e);
+            return Map.of(
+                KEY_STATUS, STATUS_DOWN,
+                KEY_ERROR, e.getMessage(),
+                KEY_TIMESTAMP, System.currentTimeMillis()
+            );
+        }
     }
 
     /**
      * Get statistics for a specific queue
      */
     @GetMapping("/queue/{queueName}")
-    public LoadBalancerService.QueueStats getQueueStats(@PathVariable String queueName) {
-        return loadBalancerService.getQueueStats(queueName);
-    }
-
-    /**
-     * Get queue depths for all main queues
-     */
-    @GetMapping("/queue-depths")
-    public Map<String, Integer> getQueueDepths() {
-        return MAIN_QUEUE_NAMES.stream()
-                .collect(Collectors.toMap(
-                        queueName -> queueName,
-                        queueName -> {
-                            try {
-                                return loadBalancerService.getQueueStats(queueName).messageCount();
-                            } catch (Exception e) {
-                                log.warn("Failed to get depth for queue {}", queueName, e);
-                                return -1;
-                            }
-                        }
-                ));
-    }
-
-    /**
-     * Get consumer counts for all main queues
-     */
-    @GetMapping("/consumer-counts")
-    public Map<String, Integer> getConsumerCounts() {
-        return MAIN_QUEUE_NAMES.stream()
-                .collect(Collectors.toMap(
-                        queueName -> queueName,
-                        queueName -> {
-                            try {
-                                return loadBalancerService.getQueueStats(queueName).consumerCount();
-                            } catch (Exception e) {
-                                log.warn("Failed to get consumer count for queue {}", queueName, e);
-                                return -1;
-                            }
-                        }
-                ));
-    }
-
-    /**
-     * Get load distribution across priority levels
-     */
-    @GetMapping("/load-distribution")
-    public Map<String, Object> getLoadDistribution() {
-        Map<String, Object> distribution = new HashMap<>();
-
+    public Map<String, Object> getQueueStats(@PathVariable String queueName) {
         try {
-            Map<String, List<String>> priorityQueues = Map.of(
-                    "HIGH", List.of("inappcommunication.priority-high-1-fed", "inappcommunication.priority-high-2-fed"),
-                    "MEDIUM", List.of("inappcommunication.priority-medium-1-fed", "inappcommunication.priority-medium-2-fed"),
-                    "LOW", List.of("inappcommunication.priority-low-1-fed", "inappcommunication.priority-low-2-fed")
+            RabbitMQMetricsService.QueueStats stats = metricsService.getQueueStats(queueName);
+            return Map.of(
+                KEY_QUEUE_NAME, stats.queueName(),
+                KEY_MESSAGE_COUNT, stats.messageCount(),
+                KEY_CONSUMER_COUNT, stats.consumerCount(),
+                KEY_TIMESTAMP, System.currentTimeMillis()
+            );
+        } catch (Exception e) {
+            log.error("Failed to get stats for queue {}", queueName, e);
+            return Map.of(
+                KEY_QUEUE_NAME, queueName,
+                KEY_ERROR, e.getMessage(),
+                KEY_TIMESTAMP, System.currentTimeMillis()
+            );
+        }
+    }
+
+    /**
+     * Get queue depth for the main priority queue
+     * Use for alerting on queue buildup
+     */
+    @GetMapping("/queue-depth")
+    public Map<String, Object> getQueueDepth() {
+        try {
+            RabbitMQMetricsService.QueueStats stats = metricsService.getQueueStats(metricsService.getMainQueueName());
+            RabbitMQMetricsService.Thresholds thresholds = metricsService.getThresholds();
+
+            String status = stats.messageCount() > thresholds.maxQueueDepth() ? STATUS_OVERLOADED : STATUS_OK;
+
+            return Map.of(
+                KEY_QUEUE_NAME, stats.queueName(),
+                "depth", stats.messageCount(),
+                "threshold", thresholds.maxQueueDepth(),
+                KEY_STATUS, status,
+                KEY_TIMESTAMP, System.currentTimeMillis()
             );
 
-            for (Map.Entry<String, List<String>> entry : priorityQueues.entrySet()) {
-                String priority = entry.getKey();
-                List<String> queues = entry.getValue();
-
-                int totalMessages = 0;
-                int totalConsumers = 0;
-                Map<String, Integer> queueDepths = new HashMap<>();
-
-                for (String queueName : queues) {
-                    try {
-                        LoadBalancerService.QueueStats stats = loadBalancerService.getQueueStats(queueName);
-                        totalMessages += stats.messageCount();
-                        totalConsumers += stats.consumerCount();
-                        queueDepths.put(queueName, stats.messageCount());
-                    } catch (Exception e) {
-                        log.warn("Failed to get stats for queue {}", queueName, e);
-                    }
-                }
-
-                Map<String, Object> priorityStats = new HashMap<>();
-                priorityStats.put("totalMessages", totalMessages);
-                priorityStats.put("totalConsumers", totalConsumers);
-                priorityStats.put("queueDepths", queueDepths);
-                priorityStats.put("loadBalance", calculateLoadBalance(queueDepths));
-
-                distribution.put(priority, priorityStats);
-            }
-
         } catch (Exception e) {
-            log.error("Failed to get load distribution", e);
-            distribution.put("error", e.getMessage());
+            log.error("Failed to get queue depth", e);
+            return Map.of(
+                KEY_ERROR, e.getMessage(),
+                KEY_TIMESTAMP, System.currentTimeMillis()
+            );
         }
-
-        return distribution;
     }
 
     /**
-     * Health check endpoint (simplified)
+     * Get consumer count for the main priority queue
+     * Use for monitoring consumer health
      */
-    @GetMapping("/health")
-    public Map<String, Object> getHealth() {
-        Map<String, Object> health = new HashMap<>();
-
+    @GetMapping("/consumer-count")
+    public Map<String, Object> getConsumerCount() {
         try {
-            int totalConsumers = MAIN_QUEUE_NAMES.stream()
-                    .mapToInt(queueName -> {
-                        try {
-                            return loadBalancerService.getQueueStats(queueName).consumerCount();
-                        } catch (Exception e) {
-                            return 0;
-                        }
-                    })
-                    .sum();
+            RabbitMQMetricsService.QueueStats stats = metricsService.getQueueStats(metricsService.getMainQueueName());
+            RabbitMQMetricsService.Thresholds thresholds = metricsService.getThresholds();
 
-            int maxDepth = MAIN_QUEUE_NAMES.stream()
-                    .mapToInt(queueName -> {
-                        try {
-                            return loadBalancerService.getQueueStats(queueName).messageCount();
-                        } catch (Exception e) {
-                            return 0;
-                        }
-                    })
-                    .max()
-                    .orElse(0);
+            String status = stats.consumerCount() >= thresholds.minConsumers() ? STATUS_HEALTHY : STATUS_DEGRADED;
 
-            String status = "UP";
-            if (totalConsumers < 60) {
-                status = "DEGRADED";
-            }
-            if (maxDepth > 10000) {
-                status = "OVERLOADED";
-            }
-
-            health.put("status", status);
-            health.put("totalConsumers", totalConsumers);
-            health.put("expectedConsumers", 120);
-            health.put("maxQueueDepth", maxDepth);
-            health.put("timestamp", System.currentTimeMillis());
+            return Map.of(
+                KEY_QUEUE_NAME, stats.queueName(),
+                KEY_CONSUMER_COUNT, stats.consumerCount(),
+                "expected", thresholds.minConsumers() + "-" + thresholds.maxConsumers() + " per pod",
+                "minimum", thresholds.minConsumers(),
+                KEY_STATUS, status,
+                KEY_TIMESTAMP, System.currentTimeMillis()
+            );
 
         } catch (Exception e) {
-            log.error("Health check failed", e);
-            health.put("status", "DOWN");
-            health.put("error", e.getMessage());
+            log.error("Failed to get consumer count", e);
+            return Map.of(
+                KEY_ERROR, e.getMessage(),
+                KEY_TIMESTAMP, System.currentTimeMillis()
+            );
         }
-
-        return health;
     }
 
     /**
-     * Get all queue metrics
+     * Get all queue depths
+     * Use for dashboard visualization
      */
-    private Map<String, LoadBalancerService.QueueStats> getAllQueueMetrics() {
-        return MAIN_QUEUE_NAMES.stream()
-                .collect(Collectors.toMap(
-                        queueName -> queueName,
-                        loadBalancerService::getQueueStats
-                ));
+    @GetMapping("/queue-depths")
+    public Map<String, Object> getAllQueueDepths() {
+        try {
+            Map<String, Integer> depths = metricsService.getQueueDepths();
+            return Map.of(
+                "queueDepths", depths,
+                KEY_TIMESTAMP, System.currentTimeMillis()
+            );
+        } catch (Exception e) {
+            log.error("Failed to get all queue depths", e);
+            return Map.of(
+                KEY_ERROR, e.getMessage(),
+                KEY_TIMESTAMP, System.currentTimeMillis()
+            );
+        }
     }
 
     /**
-     * Calculate load balance score (0-100, higher is better)
-     * 100 = perfectly balanced, 0 = completely imbalanced
+     * Get all consumer counts
+     * Use for monitoring consumer distribution
      */
-    private int calculateLoadBalance(Map<String, Integer> queueDepths) {
-        if (queueDepths.isEmpty()) {
-            return 100;
+    @GetMapping("/consumer-counts")
+    public Map<String, Object> getAllConsumerCounts() {
+        try {
+            Map<String, Integer> counts = metricsService.getConsumerCounts();
+            return Map.of(
+                "consumerCounts", counts,
+                KEY_TIMESTAMP, System.currentTimeMillis()
+            );
+        } catch (Exception e) {
+            log.error("Failed to get all consumer counts", e);
+            return Map.of(
+                KEY_ERROR, e.getMessage(),
+                KEY_TIMESTAMP, System.currentTimeMillis()
+            );
         }
-
-        int maxDepth = queueDepths.values().stream().max(Integer::compareTo).orElse(0);
-        int minDepth = queueDepths.values().stream().min(Integer::compareTo).orElse(0);
-
-        if (maxDepth == 0) {
-            return 100;  // All queues empty = perfectly balanced
-        }
-
-        double difference = maxDepth - minDepth;
-        double balance = 1.0 - (difference / maxDepth);
-        return (int) (balance * 100);
     }
 }

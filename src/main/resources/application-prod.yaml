@@ -40,9 +40,10 @@ spring:
     # Listener configuration
     listener:
       simple:
-        # Consumer concurrency (threads per queue)
-        concurrency: 10
-        max-concurrency: 20
+        # Consumer concurrency (threads for single priority queue)
+        # Uses configurable values from app.messaging.async.executor
+        concurrency: ${app.messaging.async.executor.core-threads:50}
+        max-concurrency: ${app.messaging.async.executor.max-threads:100}
 
         # Prefetch count (messages fetched per consumer)
         prefetch: 50
@@ -162,6 +163,17 @@ logging:
 
 # Custom Application Properties - Production
 app:
+  # Async messaging configuration - Production overrides (optional)
+  # Can be increased based on actual load requirements
+  messaging:
+    async:
+      enabled: true
+      executor:
+        core-threads: 50              # Higher for production (can be adjusted)
+        max-threads: 100
+      processing:
+        timeout-ms: 60000             # 60 seconds (longer for production)
+
   rabbitmq:
     # Exchange configuration with federation support
     exchange:
@@ -185,6 +197,10 @@ app:
         - 2000   # 2 seconds
         - 4000   # 4 seconds
         - 8000   # 8 seconds
+
+    # Monitoring configuration
+    monitoring:
+      max-queue-depth: 10000  # Alert when queue has more than 10K messages
 
   # Tracking
   tracking:

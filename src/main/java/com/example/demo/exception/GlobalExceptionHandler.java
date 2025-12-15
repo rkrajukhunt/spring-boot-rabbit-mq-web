@@ -29,6 +29,18 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(MessageProcessingException.class)
     public ResponseEntity<Map<String, Object>> handleMessageProcessingException(MessageProcessingException ex) {
+        // Check if this is a RabbitMQ unavailability error
+        if (ex.getMessage() != null && ex.getMessage().contains("queue unavailable")) {
+            log.error("Message queue unavailable: {}", ex.getMessage());
+            Map<String, Object> response = new HashMap<>();
+            response.put("timestamp", LocalDateTime.now());
+            response.put("status", HttpStatus.SERVICE_UNAVAILABLE.value());
+            response.put("error", "Service Unavailable");
+            response.put("message", "Message queue temporarily unavailable. Please try again later.");
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(response);
+        }
+
+        // Other processing errors return 500
         log.error("Message processing error: {}", ex.getMessage(), ex);
         Map<String, Object> response = new HashMap<>();
         response.put("timestamp", LocalDateTime.now());

@@ -15,6 +15,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
+import java.util.HashMap;
+import java.util.Map;
 
 @Service
 @Slf4j
@@ -23,15 +25,32 @@ public class MessagePublisherService {
 
     private final RabbitTemplate rabbitTemplate;
     private final TrackingService trackingService;
-    private final LoadBalancerService loadBalancerService;
+    private final CommunicationService communicationService;
 
     @Value("${app.rabbitmq.exchange.name}")
     private String exchangeName;
 
+    @Value("${app.messaging.async.enabled}")
+    private boolean asyncEnabled;
+
+    private static final String ROUTING_KEY = "messages.priority";
+    private static final String QUEUE_NAME = "inappcommunication.messages-fed";
+
     /**
-     * Publish message to RabbitMQ with automatic priority assignment and load balancing
+     * Publish message to RabbitMQ priority queue with automatic priority assignment
+     * Uses RabbitMQ native priority queue (x-max-priority=10)
+     *
+     * When async is disabled via feature flag, processes synchronously.
+     * When RabbitMQ is unavailable, rejects with exception (503 Service Unavailable).
      */
     public void publishMessage(String trackingId, MessageRequest request) {
+        // Check feature flag
+        if (!asyncEnabled) {
+            log.info("Async messaging disabled, processing synchronously for message {}", trackingId);
+            processSynchronously(trackingId, request);
+            return;
+        }
+
         // Auto-assign priority if not provided (default: MEDIUM)
         MessagePriority priority = request.getPriority() != null ? request.getPriority() : MessagePriority.MEDIUM;
 
@@ -39,33 +58,20 @@ public class MessagePublisherService {
             log.debug("Priority not provided for message {}, auto-assigned to MEDIUM", trackingId);
         }
 
-        // Use load balancer to select the best queue from available queues for this priority
-        String selectedQueue = loadBalancerService.selectQueue(priority);
-
-        // Determine routing key based on selected queue
-        String routingKey = priority.getRoutingKeyForQueue(selectedQueue);
-
         // Build message payload
-        MessagePayload payload = MessagePayload.builder()
-                .trackingId(trackingId)
-                .payload(request.getPayload())
-                .priority(priority)
-                .retryCount(0)
-                .timestamp(LocalDateTime.now())
-                .metadata(request.getMetadata())
-                .build();
+        MessagePayload payload = buildPayload(trackingId, request, priority);
 
         // Create correlation data for tracking
         CorrelationData correlationData = new CorrelationData(trackingId);
 
         try {
-            // Publish to RabbitMQ
+            // Publish to RabbitMQ priority queue
             rabbitTemplate.convertAndSend(
                     exchangeName,
-                    routingKey,
+                    ROUTING_KEY,
                     payload,
                     message -> {
-                        // Set message properties
+                        // Set message properties including priority (0-10, where 10 is highest)
                         message.getMessageProperties().setCorrelationId(trackingId);
                         message.getMessageProperties().setPriority(priority.getPriorityValue());
                         message.getMessageProperties().setDeliveryMode(MessageDeliveryMode.PERSISTENT);
@@ -75,15 +81,65 @@ public class MessagePublisherService {
             );
 
             // Update tracking with queue name
-            trackingService.updateQueueName(trackingId, selectedQueue);
+            trackingService.updateQueueName(trackingId, QUEUE_NAME);
 
-            log.info("Published message {} to exchange {} with routing key {} (selected queue: {}, priority: {})",
-                    trackingId, exchangeName, routingKey, selectedQueue, priority);
+            log.info("Published message {} to exchange {} with priority {} (value={})",
+                    trackingId, exchangeName, priority.name(), priority.getPriorityValue());
 
         } catch (AmqpException e) {
-            log.error("Failed to publish message {} to RabbitMQ", trackingId, e);
+            // RabbitMQ unavailable - reject request (don't fallback)
+            log.error("RabbitMQ unavailable, rejecting request for message {}", trackingId, e);
+            trackingService.updateStatus(trackingId, MessageStatus.FAILED,
+                    "RabbitMQ unavailable: " + e.getMessage());
+            throw new MessageProcessingException("Message queue unavailable", e);
+        }
+    }
+
+    /**
+     * Build message payload from request
+     */
+    private MessagePayload buildPayload(String trackingId, MessageRequest request, MessagePriority priority) {
+        // Convert Map<String, String> to Map<String, Object> for metadata
+        Map<String, Object> metadata = null;
+        if (request.getMetadata() != null) {
+            metadata = new HashMap<>(request.getMetadata());
+        }
+
+        return MessagePayload.builder()
+                .trackingId(trackingId)
+                .payload(request.getPayload())
+                .priority(priority)
+                .retryCount(0)
+                .timestamp(LocalDateTime.now())
+                .metadata(metadata)
+                .build();
+    }
+
+    /**
+     * Process message synchronously when feature flag is disabled
+     * Preserves original synchronous create logic as fallback
+     */
+    private void processSynchronously(String trackingId, MessageRequest request) {
+        MessagePriority priority = request.getPriority() != null ? request.getPriority() : MessagePriority.MEDIUM;
+        MessagePayload payload = buildPayload(trackingId, request, priority);
+
+        try {
+            // Update status to PROCESSING
+            trackingService.updateStatus(trackingId, MessageStatus.PROCESSING, null);
+
+            // Call createCommunication() directly (original synchronous logic)
+            communicationService.createCommunication(payload);
+
+            // Update status to COMPLETED
+            trackingService.updateStatus(trackingId, MessageStatus.COMPLETED, null);
+            trackingService.markCompleted(trackingId);
+
+            log.info("Synchronously processed message {} with priority {}", trackingId, priority.name());
+
+        } catch (Exception e) {
+            log.error("Synchronous processing failed for message {}", trackingId, e);
             trackingService.updateStatus(trackingId, MessageStatus.FAILED, e.getMessage());
-            throw new MessageProcessingException("Failed to publish message to RabbitMQ", e);
+            throw new MessageProcessingException("Synchronous processing failed", e);
         }
     }
 }

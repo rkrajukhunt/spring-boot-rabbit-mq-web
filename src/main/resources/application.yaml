@@ -30,9 +30,9 @@ spring:
     # Listener configuration
     listener:
       simple:
-        # Consumer concurrency (threads per queue)
-        concurrency: 10
-        max-concurrency: 20
+        # Consumer concurrency (threads for single priority queue)
+        concurrency: ${app.messaging.async.executor.core-threads:5}
+        max-concurrency: ${app.messaging.async.executor.max-threads:10}
 
         # Prefetch count (messages fetched per consumer)
         prefetch: 50
@@ -128,6 +128,16 @@ logging:
 
 # Custom Application Properties
 app:
+  # Async messaging configuration
+  messaging:
+    async:
+      enabled: true                    # Feature flag to enable/disable async processing
+      executor:
+        core-threads: 5               # Min consumer threads (default: 5 per pod)
+        max-threads: 10               # Max consumer threads
+      processing:
+        timeout-ms: 30000             # 30 second timeout
+
   rabbitmq:
     # Exchange configuration
     exchange:
@@ -147,6 +157,10 @@ app:
         - 2000   # 2 seconds
         - 4000   # 4 seconds
         - 8000   # 8 seconds
+
+    # Monitoring configuration
+    monitoring:
+      max-queue-depth: 10000  # Alert when queue has more than 10K messages
 
   # Tracking
   tracking:
