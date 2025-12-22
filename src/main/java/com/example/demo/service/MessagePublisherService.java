@@ -105,6 +105,11 @@ public class MessagePublisherService {
             metadata = new HashMap<>(request.getMetadata());
         }
 
+        // Use provided createRequestId or generate from trackingId
+        String createRequestId = request.getCreateRequestId() != null
+                ? request.getCreateRequestId()
+                : trackingId;
+
         return MessagePayload.builder()
                 .trackingId(trackingId)
                 .payload(request.getPayload())
@@ -112,6 +117,7 @@ public class MessagePublisherService {
                 .retryCount(0)
                 .timestamp(LocalDateTime.now())
                 .metadata(metadata)
+                .createRequestId(createRequestId)
                 .build();
     }
 

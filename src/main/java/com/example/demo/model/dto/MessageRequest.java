@@ -22,4 +22,8 @@ public class MessageRequest {
     private MessagePriority priority;
 
     private Map<String, String> metadata;
+
+    // Optional - createRequestId for tracing batch operations
+    // If not provided, will be auto-generated from trackingId
+    private String createRequestId;
 }

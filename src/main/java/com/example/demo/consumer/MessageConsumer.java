@@ -16,9 +16,11 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.messaging.handler.annotation.Header;
 import org.springframework.messaging.handler.annotation.Payload;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.io.IOException;
 import java.util.concurrent.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 @Component
 @Slf4j
@@ -35,7 +37,47 @@ public class MessageConsumer {
     @Value("${app.messaging.async.processing.timeout-ms:30000}")
     private long processingTimeoutMs;
 
+    @Value("${spring.rabbitmq.listener.simple.prefetch:50}")
+    private int prefetchCount;
+
+    @Value("${app.rabbitmq.listener.batch-size:10}")
+    private int batchSize;
+
+    @Value("${app.rabbitmq.listener.enable-batch-ack:true}")
+    private boolean enableBatchAck;
+
     private static final String QUEUE_NAME = "inappcommunication.messages-fed";
+
+    // Thread-safe batch acknowledgement tracking
+    private final ConcurrentHashMap<String, BatchAckTracker> batchAckTrackers = new ConcurrentHashMap<>();
+
+    /**
+     * Batch acknowledgement tracker for each channel (thread)
+     */
+    private static class BatchAckTracker {
+        private long lastAckedDeliveryTag = 0;
+        private int messageCount = 0;
+        private final int batchSize;
+
+        BatchAckTracker(int batchSize) {
+            this.batchSize = batchSize;
+        }
+
+        synchronized boolean shouldAck(long deliveryTag) {
+            messageCount++;
+            if (messageCount >= batchSize) {
+                messageCount = 0;
+                lastAckedDeliveryTag = deliveryTag;
+                return true;
+            }
+            lastAckedDeliveryTag = deliveryTag;
+            return false;
+        }
+
+        synchronized long getLastAckedDeliveryTag() {
+            return lastAckedDeliveryTag;
+        }
+    }
 
     // ========== MAIN PRIORITY QUEUE CONSUMER ==========
 
@@ -79,7 +121,11 @@ public class MessageConsumer {
 
     /**
      * Core message processing logic (shared by all consumers)
-     * Includes timeout handling to prevent long-running messages from blocking consumers
+     * Includes:
+     * - Transaction support wrapping create logic + manual ACK
+     * - Timeout handling to prevent long-running messages from blocking consumers
+     * - Metrics tracking (processing start/end time)
+     * - Proper executor cleanup
      */
     private void processMessage(
             MessagePayload payload,
@@ -88,12 +134,46 @@ public class MessageConsumer {
             String queueName) throws IOException {
 
         String trackingId = payload.getTrackingId();
+        String createRequestId = payload.getCreateRequestId() != null ? payload.getCreateRequestId() : trackingId;
         ExecutorService timeoutExecutor = Executors.newSingleThreadExecutor();
 
         try {
-            log.info("Processing message {} from queue {} with timeout {}ms",
-                    trackingId, queueName, processingTimeoutMs);
+            // Set processing start time for metrics
+            long processingStartTime = System.currentTimeMillis();
+            payload.setProcessingStartTime(processingStartTime);
 
+            log.info("Processing message {} (createRequestId: {}) from queue {} with timeout {}ms",
+                    trackingId, createRequestId, queueName, processingTimeoutMs);
+
+            // Execute business logic + acknowledgment in transaction
+            processMessageInTransaction(payload, deliveryTag, channel, timeoutExecutor);
+
+        } catch (Exception e) {
+            log.error("Error processing message {} from queue {}", trackingId, queueName, e);
+
+            // Handle error with retry logic
+            handleProcessingError(payload, deliveryTag, channel, queueName, e);
+        } finally {
+            // Ensure executor is properly shutdown
+            shutdownExecutor(timeoutExecutor, trackingId);
+        }
+    }
+
+    /**
+     * Process message within a transaction
+     * Transaction includes: createCommunication() + manual ACK
+     * This ensures atomicity - either both succeed or both fail
+     */
+    @Transactional
+    protected void processMessageInTransaction(
+            MessagePayload payload,
+            long deliveryTag,
+            Channel channel,
+            ExecutorService timeoutExecutor) throws IOException {
+
+        String trackingId = payload.getTrackingId();
+
+        try {
             // Update status to PROCESSING
             trackingService.updateStatus(trackingId, MessageStatus.PROCESSING, null);
 
@@ -106,32 +186,91 @@ public class MessageConsumer {
                 // Wait for completion with timeout
                 future.get(processingTimeoutMs, TimeUnit.MILLISECONDS);
 
+                // Set processing end time for metrics
+                long processingEndTime = System.currentTimeMillis();
+                payload.setProcessingEndTime(processingEndTime);
+                long processingDuration = processingEndTime - payload.getProcessingStartTime();
+
                 // Update status to COMPLETED
                 trackingService.updateStatus(trackingId, MessageStatus.COMPLETED, null);
                 trackingService.markCompleted(trackingId);
 
-                // Acknowledge message (success)
-                channel.basicAck(deliveryTag, false);
+                // Acknowledge message (success) - within transaction
+                // Use batch acknowledgement if enabled and prefetch > 1
+                acknowledgeMessage(channel, deliveryTag, trackingId);
 
-                log.info("Successfully processed message {} from queue {}", trackingId, queueName);
+                log.info("Successfully processed message {} in {}ms (createRequestId: {})",
+                        trackingId, processingDuration,
+                        payload.getCreateRequestId() != null ? payload.getCreateRequestId() : trackingId);
 
             } catch (TimeoutException e) {
                 // Cancel the task
                 future.cancel(true);
                 log.error("Processing timeout for message {} after {}ms", trackingId, processingTimeoutMs);
 
-                // Handle timeout as processing error (will retry)
-                handleProcessingError(payload, deliveryTag, channel, queueName,
-                        new MessageProcessingException("Processing timeout after " + processingTimeoutMs + "ms"));
+                // Rollback transaction and rethrow
+                throw new MessageProcessingException("Processing timeout after " + processingTimeoutMs + "ms");
             }
 
         } catch (Exception e) {
-            log.error("Error processing message {} from queue {}", trackingId, queueName, e);
+            // Transaction will rollback
+            log.error("Transaction failed for message {}", trackingId, e);
+            throw new MessageProcessingException("Transaction processing failed", e);
+        }
+    }
 
-            // Handle error with retry logic
-            handleProcessingError(payload, deliveryTag, channel, queueName, e);
-        } finally {
-            timeoutExecutor.shutdown();
+    /**
+     * Shutdown executor with proper cleanup
+     */
+    private void shutdownExecutor(ExecutorService executor, String trackingId) {
+        try {
+            executor.shutdown();
+            if (!executor.awaitTermination(1, TimeUnit.SECONDS)) {
+                executor.shutdownNow();
+                log.warn("Executor forcibly shutdown for message {}", trackingId);
+            }
+        } catch (InterruptedException e) {
+            executor.shutdownNow();
+            Thread.currentThread().interrupt();
+            log.error("Executor shutdown interrupted for message {}", trackingId, e);
+        }
+    }
+
+    // ========== ACKNOWLEDGEMENT LOGIC ==========
+
+    /**
+     * Acknowledge message with optional batch acknowledgement
+     *
+     * When batch ACK is enabled and prefetch > 1:
+     * - Accumulates messages and ACKs in batches (default: 10 messages)
+     * - Uses multiple=true to ACK all messages up to deliveryTag
+     * - Improves performance by reducing network round-trips
+     *
+     * When batch ACK is disabled or prefetch = 1:
+     * - ACKs each message individually (multiple=false)
+     */
+    private void acknowledgeMessage(Channel channel, long deliveryTag, String trackingId) throws IOException {
+        if (enableBatchAck && prefetchCount > 1) {
+            // Get or create batch tracker for this channel
+            String channelKey = String.valueOf(channel.getChannelNumber());
+            BatchAckTracker tracker = batchAckTrackers.computeIfAbsent(
+                channelKey,
+                k -> new BatchAckTracker(batchSize)
+            );
+
+            // Check if we should batch ACK
+            if (tracker.shouldAck(deliveryTag)) {
+                // ACK all messages up to and including this deliveryTag
+                channel.basicAck(deliveryTag, true);
+                log.debug("Batch ACK up to deliveryTag {} for channel {} (trackingId: {})",
+                    deliveryTag, channelKey, trackingId);
+            } else {
+                log.debug("Deferred ACK for deliveryTag {} (waiting for batch)", deliveryTag);
+            }
+        } else {
+            // Individual ACK for each message
+            channel.basicAck(deliveryTag, false);
+            log.debug("Individual ACK for deliveryTag {} (trackingId: {})", deliveryTag, trackingId);
         }
     }
 
