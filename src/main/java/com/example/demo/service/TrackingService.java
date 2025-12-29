@@ -100,13 +100,47 @@ public class TrackingService {
     }
 
     /**
-     * Mark message as completed
+     * Mark processing started - records the start time for duration calculation
+     */
+    public void markProcessingStarted(String trackingId) {
+        repository.findByTrackingId(trackingId).ifPresent(tracking -> {
+            tracking.setProcessingStartedAt(LocalDateTime.now());
+            repository.save(tracking);
+            log.debug("Marked processing started for tracking ID {}", trackingId);
+        });
+    }
+
+    /**
+     * Mark message as completed with processing duration
      */
     public void markCompleted(String trackingId) {
         repository.findByTrackingId(trackingId).ifPresent(tracking -> {
-            tracking.setCompletedAt(LocalDateTime.now());
+            LocalDateTime now = LocalDateTime.now();
+            tracking.setCompletedAt(now);
+
+            // Calculate processing duration if start time was recorded
+            if (tracking.getProcessingStartedAt() != null) {
+                long durationMs = java.time.Duration.between(
+                        tracking.getProcessingStartedAt(), now).toMillis();
+                tracking.setProcessingDurationMs(durationMs);
+                log.info("Marked tracking ID {} as completed (duration: {}ms)", trackingId, durationMs);
+            } else {
+                log.info("Marked tracking ID {} as completed", trackingId);
+            }
+
             repository.save(tracking);
-            log.info("Marked tracking ID {} as completed", trackingId);
+        });
+    }
+
+    /**
+     * Mark message as completed with explicit duration (from payload timestamps)
+     */
+    public void markCompletedWithDuration(String trackingId, long processingDurationMs) {
+        repository.findByTrackingId(trackingId).ifPresent(tracking -> {
+            tracking.setCompletedAt(LocalDateTime.now());
+            tracking.setProcessingDurationMs(processingDurationMs);
+            repository.save(tracking);
+            log.info("Marked tracking ID {} as completed (duration: {}ms)", trackingId, processingDurationMs);
         });
     }
 
@@ -119,10 +153,12 @@ public class TrackingService {
     }
 
     /**
-     * Get statistics
+     * Get statistics including processing duration metrics
      */
     public Map<String, Object> getStatistics() {
         Map<String, Object> stats = new HashMap<>();
+
+        // Message counts by status
         stats.put("total", repository.count());
         stats.put("received", repository.countByStatus(MessageStatus.RECEIVED));
         stats.put("processing", repository.countByStatus(MessageStatus.PROCESSING));
@@ -130,6 +166,17 @@ public class TrackingService {
         stats.put("failed", repository.countByStatus(MessageStatus.FAILED));
         stats.put("retry", repository.countByStatus(MessageStatus.RETRY));
         stats.put("dead_letter", repository.countByStatus(MessageStatus.DEAD_LETTER));
+
+        // Processing duration metrics
+        stats.put("processed_count", repository.countProcessedMessages());
+        Double avgDuration = repository.getAverageProcessingDuration();
+        stats.put("avg_processing_duration_ms", avgDuration != null ? avgDuration : 0.0);
+
+        // Last hour average
+        Double avgDurationLastHour = repository.getAverageProcessingDurationSince(
+                LocalDateTime.now().minusHours(1));
+        stats.put("avg_processing_duration_ms_last_hour", avgDurationLastHour != null ? avgDurationLastHour : 0.0);
+
         log.debug("Generated statistics: {}", stats);
         return stats;
     }

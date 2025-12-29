@@ -6,6 +6,7 @@ import org.springframework.amqp.rabbit.config.SimpleRabbitListenerContainerFacto
 import org.springframework.amqp.rabbit.connection.ConnectionFactory;
 import org.springframework.amqp.rabbit.core.RabbitAdmin;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import org.springframework.amqp.rabbit.transaction.RabbitTransactionManager;
 import org.springframework.amqp.support.converter.Jackson2JsonMessageConverter;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -180,6 +181,20 @@ public class RabbitMQConfig {
         return new RabbitAdmin(connectionFactory);
     }
 
+    // ========== RABBIT TRANSACTION MANAGER ==========
+
+    /**
+     * RabbitMQ Transaction Manager for coordinating RabbitMQ channel transactions
+     * with Spring's @Transactional annotation.
+     *
+     * This ensures that both database operations and RabbitMQ acknowledgements
+     * are part of the same transactional boundary.
+     */
+    @Bean
+    public RabbitTransactionManager rabbitTransactionManager(ConnectionFactory connectionFactory) {
+        return new RabbitTransactionManager(connectionFactory);
+    }
+
     // ========== RABBIT TEMPLATE (Publisher) ==========
 
     @Bean
@@ -233,10 +248,14 @@ public class RabbitMQConfig {
         // Manual acknowledgment for reliability
         factory.setAcknowledgeMode(AcknowledgeMode.MANUAL);
 
+        // Enable channel transactions to coordinate with Spring's @Transactional
+        // This ensures RabbitMQ ACK is part of the same transaction as DB operations
+        factory.setChannelTransacted(true);
+
         // Default requeue on failure = false (we handle retries manually)
         factory.setDefaultRequeueRejected(false);
 
-        log.info("RabbitMQ Listener Container Factory configured: Single priority queue, concurrency: {}-{}, prefetch: {}, manual ACK",
+        log.info("RabbitMQ Listener Container Factory configured: Single priority queue, concurrency: {}-{}, prefetch: {}, manual ACK, channelTransacted=true",
                 concurrentConsumers, maxConcurrentConsumers, prefetchCount);
 
         return factory;

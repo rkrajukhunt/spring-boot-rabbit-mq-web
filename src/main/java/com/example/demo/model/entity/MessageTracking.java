@@ -57,6 +57,12 @@ public class MessageTracking {
     @Column(name = "completed_at")
     private LocalDateTime completedAt;
 
+    @Column(name = "processing_started_at")
+    private LocalDateTime processingStartedAt;
+
+    @Column(name = "processing_duration_ms")
+    private Long processingDurationMs;
+
     @PrePersist
     protected void onCreate() {
         createdAt = LocalDateTime.now();

@@ -174,8 +174,9 @@ public class MessageConsumer {
         String trackingId = payload.getTrackingId();
 
         try {
-            // Update status to PROCESSING
+            // Update status to PROCESSING and record start time
             trackingService.updateStatus(trackingId, MessageStatus.PROCESSING, null);
+            trackingService.markProcessingStarted(trackingId);
 
             // Execute with timeout
             Future<?> future = timeoutExecutor.submit(() -> {
@@ -191,9 +192,9 @@ public class MessageConsumer {
                 payload.setProcessingEndTime(processingEndTime);
                 long processingDuration = processingEndTime - payload.getProcessingStartTime();
 
-                // Update status to COMPLETED
+                // Update status to COMPLETED and persist duration
                 trackingService.updateStatus(trackingId, MessageStatus.COMPLETED, null);
-                trackingService.markCompleted(trackingId);
+                trackingService.markCompletedWithDuration(trackingId, processingDuration);
 
                 // Acknowledge message (success) - within transaction
                 // Use batch acknowledgement if enabled and prefetch > 1
