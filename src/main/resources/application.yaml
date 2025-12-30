@@ -40,12 +40,13 @@ spring:
         # Acknowledgment mode
         acknowledge-mode: manual
 
+        # Batch acknowledgment (for prefetch > 1)
+        # When enabled, ACKs multiple messages at once for better performance
+        batch-size: ${app.rabbitmq.listener.batch-size:10}
+
         # Retry configuration
         retry:
           enabled: false  # We handle retries manually via DLX
-
-        # Consumer transaction
-        transaction-size: 10
 
         # Idle event interval
         idle-event-interval: 30000
@@ -133,8 +134,12 @@ app:
     async:
       enabled: true                    # Feature flag to enable/disable async processing
       executor:
+        # IMPORTANT: Thread count must align with database connections
+        # Formula: (core-threads × pod-count) ≤ datasource.hikari.maximum-pool-size
+        # Example: (5 threads × 10 pods) = 50 ≤ 50 DB connections ✓
+        # Default: 5 threads per pod (safe for 10 pods with 50 DB connections)
         core-threads: 5               # Min consumer threads (default: 5 per pod)
-        max-threads: 10               # Max consumer threads
+        max-threads: 10               # Max consumer threads (scales up to 10 under load)
       processing:
         timeout-ms: 30000             # 30 second timeout
 
@@ -157,6 +162,11 @@ app:
         - 2000   # 2 seconds
         - 4000   # 4 seconds
         - 8000   # 8 seconds
+
+    # Listener configuration
+    listener:
+      batch-size: 10  # Batch acknowledgement size (only used if prefetch > 1)
+      enable-batch-ack: true  # Enable batch acknowledgements for better performance
 
     # Monitoring configuration
     monitoring:

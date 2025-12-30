@@ -21,12 +21,13 @@ spring:
 
     # Connection pooling - Production configuration
     # One connection per pod, multiple channels
+    # Channel size should be >= max-concurrency + buffer for publishers
     cache:
       connection:
         mode: connection
         size: 1  # One connection per application instance/pod
       channel:
-        size: 120  # One channel per consumer thread
+        size: 25  # max-concurrency (15) + buffer for publishers/admin (10)
         checkout-timeout: 10000
 
     # Performance optimizations
@@ -42,10 +43,12 @@ spring:
       simple:
         # Consumer concurrency (threads for single priority queue)
         # Uses configurable values from app.messaging.async.executor
-        concurrency: ${app.messaging.async.executor.core-threads:50}
-        max-concurrency: ${app.messaging.async.executor.max-threads:100}
+        # IMPORTANT: These values must align with DB pool size across all pods
+        concurrency: ${app.messaging.async.executor.core-threads:15}
+        max-concurrency: ${app.messaging.async.executor.max-threads:15}
 
         # Prefetch count (messages fetched per consumer)
+        # Higher prefetch improves throughput but increases memory usage
         prefetch: 50
 
         # Acknowledgment mode
@@ -163,14 +166,26 @@ logging:
 
 # Custom Application Properties - Production
 app:
-  # Async messaging configuration - Production overrides (optional)
-  # Can be increased based on actual load requirements
+  # Async messaging configuration - Production overrides
+  # IMPORTANT: Thread count must align with database connections and pod count
+  #
+  # Scaling Formula:
+  #   (core-threads × pod-count) ≤ datasource.hikari.maximum-pool-size
+  #
+  # Example configurations:
+  #   1 pod:  core=15, max=15  → 15 threads  ≤ 50 DB connections ✓
+  #   3 pods: core=15, max=15  → 45 threads  ≤ 50 DB connections ✓
+  #   5 pods: core=10, max=10  → 50 threads  ≤ 50 DB connections ✓
+  #
+  # To scale beyond 50 total threads, increase hikari.maximum-pool-size
   messaging:
     async:
       enabled: true
       executor:
-        core-threads: 50              # Higher for production (can be adjusted)
-        max-threads: 100
+        # Conservative defaults for 3-pod deployment
+        # Adjust based on actual pod count and DB pool size
+        core-threads: 15              # 15 threads × 3 pods = 45 ≤ 50 DB connections
+        max-threads: 15               # Keep max = core to prevent DB pool exhaustion
       processing:
         timeout-ms: 60000             # 60 seconds (longer for production)
 

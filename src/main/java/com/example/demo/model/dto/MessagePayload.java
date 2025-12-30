@@ -24,4 +24,9 @@ public class MessagePayload implements Serializable {
     private Integer retryCount;
     private LocalDateTime timestamp;
     private Map<String, Object> metadata;
+
+    // Tracking information for traceability
+    private String createRequestId;  // Original create request ID for correlation
+    private Long processingStartTime; // Timestamp when processing started (for metrics)
+    private Long processingEndTime;   // Timestamp when processing completed (for metrics)
 }

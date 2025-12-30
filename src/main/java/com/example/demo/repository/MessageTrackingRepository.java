@@ -42,4 +42,17 @@ public interface MessageTrackingRepository extends JpaRepository<MessageTracking
             @Param("status") MessageStatus status,
             @Param("cutoffDate") LocalDateTime cutoffDate
     );
+
+    // Processing duration metrics
+    @Query("SELECT AVG(m.processingDurationMs) FROM MessageTracking m " +
+            "WHERE m.processingDurationMs IS NOT NULL")
+    Double getAverageProcessingDuration();
+
+    @Query("SELECT AVG(m.processingDurationMs) FROM MessageTracking m " +
+            "WHERE m.processingDurationMs IS NOT NULL AND m.createdAt >= :since")
+    Double getAverageProcessingDurationSince(@Param("since") LocalDateTime since);
+
+    @Query("SELECT COUNT(m) FROM MessageTracking m " +
+            "WHERE m.processingDurationMs IS NOT NULL")
+    long countProcessedMessages();
 }
